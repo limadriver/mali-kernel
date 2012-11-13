@@ -76,7 +76,7 @@ static void _allocation_list_item_release(AllocationList * item);
 
 
 /* Variable declarations */
-spinlock_t allocation_list_spinlock; 
+spinlock_t allocation_list_spinlock = SPIN_LOCK_UNLOCKED;
 static AllocationList * pre_allocated_memory = (AllocationList*) NULL ;
 static int pre_allocated_memory_size_current  = 0;
 #ifdef MALI_OS_MEMORY_KERNEL_BUFFER_SIZE_IN_MB
@@ -99,7 +99,6 @@ static struct vm_operations_struct mali_kernel_vm_ops =
 
 void mali_osk_low_level_mem_init(void)
 {
-	spin_lock_init( &allocation_list_spinlock );
 	pre_allocated_memory = (AllocationList*) NULL ;
 }
 
@@ -276,6 +275,11 @@ void _mali_osk_mem_barrier( void )
 	mb();
 }
 
+void _mali_osk_write_mem_barrier( void )
+{
+	wmb();
+}
+
 mali_io_address _mali_osk_mem_mapioregion( u32 phys, u32 size, const char *description )
 {
 	return (mali_io_address)ioremap_nocache(phys, size);
@@ -302,8 +306,7 @@ mali_io_address _mali_osk_mem_allocioregion( u32 *phys, u32 size )
 
  	if ( NULL == virt )
  	{
-		MALI_DEBUG_PRINT(1, ("allocioregion: Failed to allocate Pagetable memory, size=0x%.8X\n", size ));
-		MALI_DEBUG_PRINT(1, ("Solution: When configuring and building linux kernel, set CONSISTENT_DMA_SIZE to be 14 MB.\n"));
+		MALI_DEBUG_PRINT(5, ("allocioregion: Failed to allocate Pagetable memory, size=0x%.8X\n", size ));
  		return 0;
  	}
 
@@ -331,6 +334,11 @@ void inline _mali_osk_mem_unreqregion( u32 phys, u32 size )
 	release_mem_region(phys, size);
 }
 
+void inline _mali_osk_mem_iowrite32_relaxed( volatile mali_io_address addr, u32 offset, u32 val )
+{
+	__raw_writel(cpu_to_le32(val),((u8*)addr) + offset);
+}
+
 u32 inline _mali_osk_mem_ioread32( volatile mali_io_address addr, u32 offset )
 {
 	return ioread32(((u8*)addr) + offset);
@@ -348,7 +356,7 @@ void _mali_osk_cache_flushall( void )
 
 void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 offset, u32 size )
 {
-	wmb();
+	_mali_osk_write_mem_barrier();
 }
 
 _mali_osk_errcode_t _mali_osk_mem_mapregion_init( mali_memory_allocation * descriptor )
@@ -480,6 +488,11 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
 		u32 linux_phys_frame_num;
 
 		alloc_item = _allocation_list_item_get();
+		if (NULL == alloc_item)
+		{
+			MALI_DEBUG_PRINT(1, ("Failed to allocate list item\n"));
+			return _MALI_OSK_ERR_NOMEM;
+		}
 
 		linux_phys_frame_num = alloc_item->physaddr >> PAGE_SHIFT;
 

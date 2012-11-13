@@ -43,7 +43,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.description = "Mali-400 PP 2",
 		.mmu_id = 4
 	},
-#if USING_MMU
 	{
 		.type = MMU,
 		.base = 0xC0003000,
@@ -72,7 +71,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.description = "Mali-400 MMU for PP 2",
 		.mmu_id = 4
 	},
-#endif
 	{
 		.type = MEMORY,
 		.description = "Mali SDRAM remapped to baseboard",

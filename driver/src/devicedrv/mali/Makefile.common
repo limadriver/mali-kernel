@@ -8,6 +8,9 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #
 
+# Check if a Mali Core sub module should be enabled, true or false returned
+submodule_enabled = $(shell gcc $(DEFINES) -E $1/arch/config.h | grep type | grep -c $(2))
+
 OSKFILES=\
 	$(FILES_PREFIX)$(OSKOS)/mali_osk_atomics.c \
 	$(FILES_PREFIX)$(OSKOS)/mali_osk_irq.c \
@@ -45,7 +48,7 @@ SVN_REV := $(MALI_RELEASE_NAME)-r$(SVN_REV)
 endif
 
 # Common version-string, will be extended by OS-specifc sections
-VERSION_STRINGS =
+VERSION_STRINGS :=
 VERSION_STRINGS += CONFIG=$(CONFIG)
 VERSION_STRINGS += USING_OS_MEMORY=$(USING_OS_MEMORY)
 VERSION_STRINGS += API_VERSION=$(shell cd $(DRIVER_DIR); grep "\#define _MALI_API_VERSION" $(FILES_PREFIX)common\/mali_uk_types.h | cut -d' ' -f 3 )

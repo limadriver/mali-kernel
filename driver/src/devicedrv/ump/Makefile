@@ -20,8 +20,12 @@ endif
 # For each arch check: CROSS_COMPILE , KDIR , CFLAGS += -DARCH
 
 ARCH ?= arm
-## @note Should allow overriding of building UMP for non-debug:
+BUILD ?= debug
+
 EXTRA_CFLAGS += -DDEBUG -DMALI_STATE_TRACKING=0
+ifeq ($(BUILD), debug)
+EXTRA_CFLAGS += -DDEBUG
+endif
 
 # linux build system integration
 

@@ -22,7 +22,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.irq = -1,
 		.mmu_id = 1
 	},
-#if USING_MMU
 	{
 		.type = MMU,
 		.base = 0xc0003000,
@@ -30,7 +29,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.description = "Mali MMU",
 		.mmu_id = 1
 	},
-#endif /* USING_MMU */
 	{
 		.type = FPGA_FRAMEWORK,
 		.base = 0xC000A000,
