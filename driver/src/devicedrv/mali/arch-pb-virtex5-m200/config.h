@@ -43,8 +43,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.description = "Mali 200 (GX525)",
 		.mmu_id = 1
 	},
-
-#if ! ONLY_ZBT
 #if USING_OS_MEMORY
 	{
 		.type = OS_MEMORY,
@@ -59,18 +57,10 @@ static _mali_osk_resource_t arch_configuration [] =
 		.description = "Mali SDRAM remapped to baseboard",
 		.cpu_usage_adjust = -0x50000000,
 		.alloc_order = 0, /* Highest preference for this memory */
-#if MALI_USE_UNIFIED_MEMORY_PROVIDER != 0
-		.base = 0xD2000000, /* Reserving 32MB for UMP devicedriver */
-		.size = 0x0E000000, /* 224 MB */
-#else
 		.base = 0xD0000000,
 		.size = 0x10000000, /* 256 MB */
-#endif /* MALI_USE_UNIFIED_MEMORY_PROVIDER != 0 */
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
-#endif /* ! ONLY_ZBT */
-
-#if USING_ZBT
 	{
 		.type = MEMORY,
 		.description = "Mali ZBT",
@@ -79,7 +69,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.size = 0x01000000,
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
-#endif /* USING_ZBT */
 	{
 		.type = MEM_VALIDATION,
 		.description = "Framebuffer",
