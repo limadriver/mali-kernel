@@ -30,11 +30,6 @@ static _mali_osk_resource_t arch_configuration [] =
 		.mmu_id = 1
 	},
 	{
-		.type = FPGA_FRAMEWORK,
-		.base = 0xC000A000,
-		.description = "FPGA Framework"
-	},
-	{
 		.type = MALI200,
 		.base = 0xc0000000,
 		.irq = -1/*106*/,
