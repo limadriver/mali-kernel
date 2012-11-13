@@ -74,6 +74,7 @@ _mali_osk_irq_t *_mali_osk_irq_init( u32 irqnum, _mali_osk_irq_uhandler_t uhandl
 		if(NULL == mali_wq)
 		{
 			MALI_PRINT_ERROR(("Unable to create Mali workqueue\n"));
+			kfree( irq_object );
 			return NULL;
 		}
 	}
