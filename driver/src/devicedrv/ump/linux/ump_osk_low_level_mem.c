@@ -23,6 +23,11 @@
 #include <linux/module.h>            /* kernel module definitions */
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
+
+#include <asm/memory.h>
+#include <asm/cacheflush.h>
+#include <linux/dma-mapping.h>
 
 typedef struct ump_vma_usage_tracker
 {
@@ -133,7 +138,6 @@ _mali_osk_errcode_t _ump_osk_mem_mapregion_init( ump_memory_allocation * descrip
 		return -_MALI_OSK_ERR_FAULT;
 	}
 
-
 	vma = (struct vm_area_struct*)descriptor->process_mapping_info;
 	if (NULL == vma ) return _MALI_OSK_ERR_FAULT;
 
@@ -141,7 +145,11 @@ _mali_osk_errcode_t _ump_osk_mem_mapregion_init( ump_memory_allocation * descrip
 	vma->vm_flags |= VM_IO;
 	vma->vm_flags |= VM_RESERVED;
 
-	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	if (0==descriptor->is_cached)
+	{
+		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	}
+	DBG_MSG(3, ("Mapping with page_prot: 0x%x\n", vma->vm_page_prot ));
 
 	/* Setup the functions which handle further VMA handling */
 	vma->vm_ops = &ump_vm_ops;
@@ -173,9 +181,10 @@ void _ump_osk_mem_mapregion_term( ump_memory_allocation * descriptor )
 	return;
 }
 
-_mali_osk_errcode_t _ump_osk_mem_mapregion_map( ump_memory_allocation * descriptor, u32 offset, u32 phys_addr, unsigned long size )
+_mali_osk_errcode_t _ump_osk_mem_mapregion_map( ump_memory_allocation * descriptor, u32 offset, u32 * phys_addr, unsigned long size )
 {
 	struct vm_area_struct *vma;
+	_mali_osk_errcode_t retval;
 
 	if (NULL == descriptor) return _MALI_OSK_ERR_FAULT;
 
@@ -183,13 +192,52 @@ _mali_osk_errcode_t _ump_osk_mem_mapregion_map( ump_memory_allocation * descript
 
 	if (NULL == vma ) return _MALI_OSK_ERR_FAULT;
 
-		DBG_MSG(5, ("Mapping virtual to physical memory. ID: %u, vma: 0x%08lx, virtual addr:0x%08lx, physical addr: 0x%08lx, size:%lu, prot:0x%x\n",
+	retval = remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, (*phys_addr) >> PAGE_SHIFT, size, vma->vm_page_prot) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;;
+
+		DBG_MSG(4, ("Mapping virtual to physical memory. ID: %u, vma: 0x%08lx, virtual addr:0x%08lx, physical addr: 0x%08lx, size:%lu, prot:0x%x, vm_flags:0x%x RETVAL: 0x%x\n",
 		        ump_dd_secure_id_get(descriptor->handle),
 		        (unsigned long)vma,
 		        (unsigned long)(vma->vm_start + offset),
-		        (unsigned long)phys_addr,
+		        (unsigned long)*phys_addr,
 		        size,
-		        (unsigned int)vma->vm_page_prot));
+		        (unsigned int)vma->vm_page_prot, vma->vm_flags, retval));
 
-	return io_remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, phys_addr >> PAGE_SHIFT, size, vma->vm_page_prot) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;
+	return retval;
+}
+
+
+void _ump_osk_msync( ump_dd_mem * mem, ump_uk_msync_op op )
+{
+	int i;
+	DBG_MSG(3, ("Flushing nr of blocks: %u. First: paddr: 0x%08x vaddr: 0x%08x size:%dB\n", mem->nr_blocks, mem->block_array[0].addr, phys_to_virt(mem->block_array[0].addr), mem->block_array[0].size));
+
+	/* TODO: Use args->size and args->address to select a subrange of this allocation to flush */
+	for (i=0 ; i<mem->nr_blocks; i++)
+	{
+		/* TODO: Find out which flush method is best of 1)Dma OR  2)Normal flush functions */
+		/* TODO: Use args->op to select the flushing method: CLEAN_AND_INVALIDATE or CLEAN */
+		/*#define USING_DMA_FLUSH*/
+		#ifdef  USING_DMA_FLUSH
+			DEBUG_ASSERT( (PAGE_SIZE==mem->block_array[i].size));
+			dma_map_page(NULL, pfn_to_page(mem->block_array[i].addr >> PAGE_SHIFT), 0, PAGE_SIZE, DMA_BIDIRECTIONAL );
+			/*dma_unmap_page(NULL, mem->block_array[i].addr, PAGE_SIZE, DMA_BIDIRECTIONAL);*/
+		#else
+			/* Normal style flush */
+			ump_dd_physical_block *block;
+			u32 start_p, end_p;
+			const void *start_v, *end_v;
+			block = &mem->block_array[i];
+
+			start_p   = (u32)block->addr;
+			start_v = phys_to_virt( start_p ) ;
+
+			end_p   = start_p + block->size-1;
+			end_v   = phys_to_virt( end_p ) ;
+
+			dmac_flush_range(start_v, end_v);
+			outer_flush_range(start_p, end_p);
+		#endif
+	}
+
+	return ;
 }

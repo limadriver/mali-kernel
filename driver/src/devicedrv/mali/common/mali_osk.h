@@ -38,12 +38,13 @@ extern "C"
 
 /* Define integer types used by OSK. Note: these currently clash with Linux so we only define them if not defined already */
 #ifndef __KERNEL__
-	typedef unsigned char	u8;
-	typedef signed char		s8;
-	typedef unsigned short	u16;
-	typedef signed short	s16;
-	typedef unsigned int	u32;
-	typedef signed int	    s32;
+	typedef unsigned char      u8;
+	typedef signed char        s8;
+	typedef unsigned short     u16;
+	typedef signed short       s16;
+	typedef unsigned int       u32;
+	typedef signed int         s32;
+	typedef unsigned long long u64;
 	#define BITS_PER_LONG (sizeof(long)*8)
 #else
 	/* Ensure Linux types u32, etc. are defined */
@@ -52,14 +53,14 @@ extern "C"
 
 /** @brief Mali Boolean type which uses MALI_TRUE and MALI_FALSE
   */
-	typedef unsigned long	mali_bool;
+	typedef unsigned long mali_bool;
 	
 #ifndef MALI_TRUE
-#define MALI_TRUE ((mali_bool)1)
+	#define MALI_TRUE ((mali_bool)1)
 #endif
 
 #ifndef MALI_FALSE
-#define MALI_FALSE ((mali_bool)0)
+	#define MALI_FALSE ((mali_bool)0)
 #endif
 
 /**
@@ -82,7 +83,7 @@ typedef enum
     _MALI_OSK_ERR_INVALID_FUNC = -2, /**< Invalid function requested through User/Kernel interface (e.g. bad IOCTL number) */
     _MALI_OSK_ERR_INVALID_ARGS = -3, /**< Invalid arguments passed through User/Kernel interface */
     _MALI_OSK_ERR_NOMEM = -4, /**< Insufficient memory */
-    _MALI_OSK_ERR_TIMEOUT = -5, /**< Timeout occured */
+    _MALI_OSK_ERR_TIMEOUT = -5, /**< Timeout occurred */
     _MALI_OSK_ERR_RESTARTSYSCALL = -6, /**< Special: On certain OSs, must report when an interruptable mutex is interrupted. Ignore otherwise. */
     _MALI_OSK_ERR_ITEM_NOT_FOUND = -7, /**< Table Lookup failed */
     _MALI_OSK_ERR_BUSY = -8, /**< Device/operation is busy. Try again later */
@@ -168,7 +169,7 @@ typedef void (*_mali_osk_irq_bhandler_t)( void * arg );
  * represent signed 24-bit integers.
  *
  * Regardless of implementation, the \ref _mali_osk_atomic functions \b must be used
- * for all accesses to the variable's value, even if atomicity is not requried.
+ * for all accesses to the variable's value, even if atomicity is not required.
  * Do not access u.val or u.obj directly.
  */
 typedef struct
@@ -422,7 +423,7 @@ typedef struct _mali_osk_list_s
 } _mali_osk_list_t;
 
 /** @brief Initialize a list to be a head of an empty list
- * @param exp the list to initalize. */
+ * @param exp the list to initialize. */
 #define _MALI_OSK_INIT_LIST_HEAD(exp) _mali_osk_list_init(exp)
 
 /** @brief Define a list variable, which is uninitialized.
@@ -488,7 +489,7 @@ typedef struct _mali_osk_list_s
  * each list entry.
  *
  * Upon loop completion, providing that an early out was not taken in the
- * loop body, then it is guarenteed that ptr->member == list, even if the loop
+ * loop body, then it is guaranteed that ptr->member == list, even if the loop
  * body never executed.
  *
  * @param ptr a pointer to an object of type 'type', which points to the
@@ -531,8 +532,11 @@ typedef enum _mali_osk_resource_type
 	MMU                 =5,  /**< Mali MMU (Memory Management Unit) */
 	FPGA_FRAMEWORK      =6,  /**< Mali registers specific to FPGA implementations */
 	MALI400L2           =7,  /**< Mali400 L2 Cache */
+	MALI300L2           =7, /**< Mali300 L2 Cache */
 	MALI400GP           =8,  /**< Mali400 Programmable Vertex Shader Core */
+	MALI300GP           =8, /**< Mali300 Programmable Vertex Shader Core */
 	MALI400PP           =9,  /**< Mali400 Programmable Fragment Shader Core */
+	MALI300PP           =9, /**< Mali300 Programmable Fragment Shader Core */
 	MEM_VALIDATION      =10, /**< External Memory Validator */
 	PMU                 =11, /**< Power Manangement Unit */
 	RESOURCE_TYPE_COUNT      /**< The total number of known resources */
@@ -621,7 +625,7 @@ _mali_osk_irq_t *_mali_osk_irq_init( u32 irqnum, _mali_osk_irq_uhandler_t uhandl
  * Code that operates in a kernel-process context (with no IRQ context
  * restrictions) may also enqueue deferred calls to the IRQ bottom-half. The
  * advantage over direct calling is that deferred calling allows the caller and
- * IRQ bottom half to hold the same mutex, with a guarentee that they will not
+ * IRQ bottom half to hold the same mutex, with a guarantee that they will not
  * deadlock just by using this mechanism.
  *
  * _mali_osk_irq_schedulework() places deferred call requests on a queue, to
@@ -629,7 +633,7 @@ _mali_osk_irq_t *_mali_osk_irq_init( u32 irqnum, _mali_osk_irq_uhandler_t uhandl
  * called 'K' times, then the IRQ bottom-half will be scheduled 'K' times too.
  * 'K' is a number that is implementation-specific.
  *
- * _mali_osk_irq_schedulework() is guarenteed to not block on:
+ * _mali_osk_irq_schedulework() is guaranteed to not block on:
  * - enqueuing a deferred call request.
  * - the completion of the IRQ bottom-half handler.
  *
@@ -700,12 +704,33 @@ void _mali_osk_irq_term( _mali_osk_irq_t *irq );
  * @param atom pointer to an atomic counter */
 void _mali_osk_atomic_dec( _mali_osk_atomic_t *atom );
 
+/** @brief Decrement an atomic counter, return new value
+ *
+ * Although the value returned is a u32, only numbers with signed 24-bit
+ * precision (sign extended to u32) are returned.
+ *
+ * @note It is an error to decrement the counter beyond -(1<<23)
+ *
+ * @param atom pointer to an atomic counter
+ * @return The new value, after decrement */
+u32 _mali_osk_atomic_dec_return( _mali_osk_atomic_t *atom );
+
 /** @brief Increment an atomic counter
  *
  * @note It is an error to increment the counter beyond (1<<23)-1
  *
  * @param atom pointer to an atomic counter */
 void _mali_osk_atomic_inc( _mali_osk_atomic_t *atom );
+
+/** @brief Increment an atomic counter, return new value
+ *
+ * Although the value returned is a u32, only numbers with signed 24-bit
+ * precision (sign extended to u32) are returned.
+ *
+ * @note It is an error to increment the counter beyond (1<<23)-1
+ *
+ * @param atom pointer to an atomic counter */
+u32 _mali_osk_atomic_inc_return( _mali_osk_atomic_t *atom );
 
 /** @brief Initialize an atomic counter
  *
@@ -728,8 +753,8 @@ _mali_osk_errcode_t _mali_osk_atomic_init( _mali_osk_atomic_t *atom, u32 val );
  * precision (sign extended to u32) are returned.
  *
  * This can only be safely used to determine the value of the counter when it
- * is guarenteed that other threads will not be modifying the counter. This
- * makes its usefullness limited.
+ * is guaranteed that other threads will not be modifying the counter. This
+ * makes its usefulness limited.
  *
  * @param atom pointer to an atomic counter
  */
@@ -764,7 +789,7 @@ void _mali_osk_atomic_term( _mali_osk_atomic_t *atom );
  *
  * @param n Number of elements to allocate
  * @param size Size of each element
- * @return On success, the zero initialized buffer allocated. NULL on failure
+ * @return On success, the zero-initialized buffer allocated. NULL on failure
  */
 void *_mali_osk_calloc( u32 n, u32 size );
 
@@ -834,6 +859,21 @@ void *_mali_osk_memcpy( void *dst, const void *src, u32 len );
 void *_mali_osk_memset( void *s, u32 c, u32 n );
 /** @} */ /* end group _mali_osk_memory */
 
+
+/** @brief Checks the amount of memory allocated
+ *
+ * Checks that not more than \a max_allocated bytes are allocated. 
+ *
+ * Some OS bring up an interactive out of memory dialogue when the
+ * system runs out of memory. This can stall non-interactive
+ * apps (e.g. automated test runs). This function can be used to
+ * not trigger the OOM dialogue by keeping allocations
+ * within a certain limit.
+ *
+ * @return MALI_TRUE when \a max_allocated bytes are not in use yet. MALI_FALSE 
+ * when at least \a max_allocated bytes are in use.
+ */
+mali_bool _mali_osk_mem_check_allocated( u32 max_allocated );
 
 /** @addtogroup _mali_osk_lock
  * @{ */
@@ -973,7 +1013,7 @@ void _mali_osk_mem_unmapioregion( u32 phys, u32 size, mali_io_address mapping );
  * page tables) and mapping them into kernel space. The mapping is only
  * visible from kernel-space.
  *
- * The alignment of the returned memory is guarenteed to be at least
+ * The alignment of the returned memory is guaranteed to be at least
  * _MALI_OSK_CPU_PAGE_SIZE.
  *
  * Access must go through _mali_osk_mem_ioread32 and _mali_osk_mem_iowrite32
@@ -983,7 +1023,7 @@ void _mali_osk_mem_unmapioregion( u32 phys, u32 size, mali_io_address mapping );
  * and 'map it into kernel space'
  *
  * @param[out] phys CPU-physical base address of memory that was allocated.
- * (*phys) will be guarenteed to be aligned to at least
+ * (*phys) will be guaranteed to be aligned to at least
  * _MALI_OSK_CPU_PAGE_SIZE on success.
  *
  * @param[in] size the number of bytes of physically contiguous memory to
@@ -1100,7 +1140,7 @@ void _mali_osk_cache_flushall( void );
  * They zero the memory through a cached mapping, then flush the inner caches but not the outer caches.
  * This is required for MALI to have the correct view of the memory. 
  */
-void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 size );
+void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 offset, u32 size );
 
 /** @} */ /* end group _mali_osk_low_level_memory */
 
@@ -1265,7 +1305,7 @@ void _mali_osk_notification_queue_send( _mali_osk_notification_queue_t *queue, _
  * On timeout the result will be NULL.
  *
  * @param queue The queue to receive from
- * @param timeout Timeout for the sleep if no notificaton is pending.
+ * @param timeout Timeout for the sleep if no notification is pending.
  * If this is set to 0, then it will not sleep.
  * @param result Pointer to storage of a pointer of type
  * \ref _mali_osk_notification_t*. \a result will be written to such that the
@@ -1334,14 +1374,14 @@ void _mali_osk_timer_mod( _mali_osk_timer_t *tim, u32 expiry_tick);
 
 /** @brief Stop a timer, and block on its completion.
  *
- * Stop the timer. When the function returns, it is guarenteed that the timer's
+ * Stop the timer. When the function returns, it is guaranteed that the timer's
  * callback will not be running on any CPU core.
  *
  * Since stoping the timer blocks on compeletion of the callback, the callback
  * may not obtain any mutexes that the caller holds. Otherwise, a deadlock will
  * occur.
  *
- * @note While the callback itself is guarenteed to not be running, work
+ * @note While the callback itself is guaranteed to not be running, work
  * enqueued on the IRQ work-queue by the timer (with
  * \ref _mali_osk_irq_schedulework()) may still run. The timer callback and IRQ
  * bottom-half handler must take this into account.
@@ -1449,6 +1489,14 @@ u32	_mali_osk_time_tickcount( void );
  * @param usecs the number of microseconds to wait for.
  */
 void _mali_osk_time_ubusydelay( u32 usecs );
+
+/** @brief Return time in nano seconds, since any given reference.
+ * 
+ * @return Time in nano seconds
+ */
+u64 _mali_osk_time_get_ns( void );
+
+
 /** @} */ /* end group _mali_osk_time */
 
 /** @defgroup _mali_osk_math OSK Math
@@ -1502,6 +1550,18 @@ void _mali_osk_abort(void);
  * This function is only used in Debug builds, and is not used in Release builds.
  */
 void _mali_osk_break(void);
+
+/** @brief Return an identificator for calling process.
+ *
+ * @return Identificator for calling process.
+ */
+u32 _mali_osk_get_pid(void);
+
+/** @brief Return an identificator for calling thread.
+ *
+ * @return Identificator for calling thread.
+ */
+u32 _mali_osk_get_tid(void);
 
 /** @} */ /* end group  _mali_osk_miscellaneous */
 

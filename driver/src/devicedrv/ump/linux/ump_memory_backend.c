@@ -53,8 +53,8 @@ ump_memory_backend* ump_memory_backend_create ( void )
 	}
 	else if (1 == ump_backend)
 	{
-		DBG_MSG(2, ("Using OS memory backend\n"));
-		backend = ump_os_memory_backend_create();
+		DBG_MSG(2, ("Using OS memory backend, allocation limit: %d\n", ump_memory_size));
+		backend = ump_os_memory_backend_create(ump_memory_size);
 	}
 
 	return backend;

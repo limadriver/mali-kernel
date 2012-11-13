@@ -18,6 +18,7 @@
 
 #include <mali_osk.h>
 #include <ump_kernel_memory_backend.h>
+#include <ump_uk_types.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -34,9 +35,11 @@ int _ump_osk_atomic_dec_and_read( _mali_osk_atomic_t *atom );
 
 _mali_osk_errcode_t _ump_osk_mem_mapregion_init( ump_memory_allocation *descriptor );
 
-_mali_osk_errcode_t _ump_osk_mem_mapregion_map( ump_memory_allocation * descriptor, u32 offset, u32 phys_addr, unsigned long size );
+_mali_osk_errcode_t _ump_osk_mem_mapregion_map( ump_memory_allocation * descriptor, u32 offset, u32 * phys_addr, unsigned long size );
 
 void _ump_osk_mem_mapregion_term( ump_memory_allocation * descriptor );
+
+void _ump_osk_msync( ump_dd_mem * mem, ump_uk_msync_op op );
 
 #ifdef __cplusplus
 }

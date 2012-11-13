@@ -18,6 +18,7 @@
 #include "ump_kernel_interface.h"
 #include "ump_kernel_types.h"
 
+
 typedef struct ump_memory_allocation
 {
 	void                    * phys_addr;
@@ -28,6 +29,7 @@ typedef struct ump_memory_allocation
 	u32                       cookie;               /**< necessary on some U/K interface implementations */
 	struct ump_session_data * ump_session;          /**< Session that this allocation belongs to */
 	_mali_osk_list_t          list;                 /**< List for linking together memory allocations into the session's memory head */
+	u32 is_cached;
 } ump_memory_allocation;
 
 typedef struct ump_memory_backend
@@ -35,6 +37,8 @@ typedef struct ump_memory_backend
 	int  (*allocate)(void* ctx, ump_dd_mem * descriptor);
 	void (*release)(void* ctx, ump_dd_mem * descriptor);
 	void (*shutdown)(struct ump_memory_backend * backend);
+	int  (*pre_allocate_physical_check)(void *ctx, u32 size);
+	u32  (*adjust_to_mali_phys)(void *ctx, u32 cpu_phys);
 	void * ctx;
 } ump_memory_backend;
 

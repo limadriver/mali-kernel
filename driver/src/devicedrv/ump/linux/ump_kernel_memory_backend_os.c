@@ -17,7 +17,9 @@
 #include <asm/semaphore.h>
 #endif
 
+#include <linux/dma-mapping.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <asm/atomic.h>
 #include <linux/vmalloc.h>
 #include <asm/cacheflush.h>
@@ -44,11 +46,10 @@ static void os_memory_backend_destroy(ump_memory_backend * backend);
 /*
  * Create OS memory backend
  */
-ump_memory_backend * ump_os_memory_backend_create(void)
+ump_memory_backend * ump_os_memory_backend_create(const int max_allocation)
 {
 	ump_memory_backend * backend;
 	os_allocator * info;
-	const int max_allocation = 32*1024*1024;
 
 	info = kmalloc(sizeof(os_allocator), GFP_KERNEL);
 	if (NULL == info)
@@ -72,6 +73,8 @@ ump_memory_backend * ump_os_memory_backend_create(void)
 	backend->allocate = os_allocate;
 	backend->release = os_free;
 	backend->shutdown = os_memory_backend_destroy;
+	backend->pre_allocate_physical_check = NULL;
+	backend->adjust_to_mali_phys = NULL;
 
 	return backend;
 }
@@ -101,12 +104,14 @@ static int os_allocate(void* ctx, ump_dd_mem * descriptor)
 	u32 left;
 	os_allocator * info;
 	int pages_allocated = 0;
+	int is_cached;
 
 	BUG_ON(!descriptor);
 	BUG_ON(!ctx);
 
 	info = (os_allocator*)ctx;
 	left = descriptor->size_bytes;
+	is_cached = descriptor->is_cached;
 
 	if (down_interruptible(&info->mutex))
 	{
@@ -131,18 +136,30 @@ static int os_allocate(void* ctx, ump_dd_mem * descriptor)
 	{
 		struct page * new_page;
 
-		new_page = alloc_page(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN);
+		if (is_cached)
+		{
+			new_page = alloc_page(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN );
+		} else
+		{
+			new_page = alloc_page(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN | __GFP_COLD);
+		}
 		if (NULL == new_page)
 		{
 			break;
 		}
 
-		flush_dcache_page(new_page);
+		/* Ensure page caches are flushed. */
+		if ( is_cached )
+		{
+			descriptor->block_array[pages_allocated].addr = page_to_phys(new_page);
+			descriptor->block_array[pages_allocated].size = PAGE_SIZE;
+		} else
+		{
+			descriptor->block_array[pages_allocated].addr = dma_map_page(NULL, new_page, 0, PAGE_SIZE, DMA_BIDIRECTIONAL );
+			descriptor->block_array[pages_allocated].size = PAGE_SIZE;
+		}
 
-		descriptor->block_array[pages_allocated].addr = page_to_phys(new_page);
-		descriptor->block_array[pages_allocated].size = PAGE_SIZE;
-
-		DBG_MSG(6, ("Allocated page 0x%08lx\n", descriptor->block_array[pages_allocated].addr));
+		DBG_MSG(5, ("Allocated page 0x%08lx cached: %d\n", descriptor->block_array[pages_allocated].addr, is_cached));
 
 		if (left < PAGE_SIZE)
 		{
@@ -156,7 +173,7 @@ static int os_allocate(void* ctx, ump_dd_mem * descriptor)
 		pages_allocated++;
 	}
 
-	DBG_MSG(5, ("Allocated %d pages\n", pages_allocated));
+	DBG_MSG(5, ("Alloce for ID:%2d got %d pages, cached: %d\n", descriptor->secure_id,  pages_allocated));
 
 	if (left)
 	{
@@ -165,6 +182,10 @@ static int os_allocate(void* ctx, ump_dd_mem * descriptor)
 		while(pages_allocated)
 		{
 			pages_allocated--;
+			if ( !is_cached )
+			{
+				dma_unmap_page(NULL, descriptor->block_array[pages_allocated].addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
+			}
 			__free_page(pfn_to_page(descriptor->block_array[pages_allocated].addr >> PAGE_SHIFT) );
 		}
 
@@ -213,6 +234,10 @@ static void os_free(void* ctx, ump_dd_mem * descriptor)
 	for ( i = 0; i < descriptor->nr_blocks; i++)
 	{
 		DBG_MSG(6, ("Freeing physical page. Address: 0x%08lx\n", descriptor->block_array[i].addr));
+		if ( ! descriptor->is_cached)
+		{
+			dma_unmap_page(NULL, descriptor->block_array[i].addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
+		}
 		__free_page(pfn_to_page(descriptor->block_array[i].addr>>PAGE_SHIFT) );
 	}
 

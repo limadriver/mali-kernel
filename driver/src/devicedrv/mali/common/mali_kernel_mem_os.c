@@ -64,7 +64,7 @@ mali_physical_memory_allocator * mali_os_allocator_create(u32 max_allocation, u3
 			info->num_pages_allocated = 0;
 			info->cpu_usage_adjust = cpu_usage_adjust;
 
-			info->mutex = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_ORDERED, 0, 106);
+			info->mutex = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE | _MALI_OSK_LOCKFLAG_ORDERED, 0, 106);
             if (NULL != info->mutex)
             {
 			    allocator->allocate = os_allocator_allocate;
@@ -118,11 +118,12 @@ static mali_physical_memory_allocation_result os_allocator_allocate(void* ctx, m
 	allocation = _mali_osk_malloc(sizeof(os_allocation));
 	if (NULL != allocation)
 	{
+		u32 os_mem_max_usage = info->num_pages_max * _MALI_OSK_CPU_PAGE_SIZE;
 		allocation->offset_start = *offset;
 		allocation->num_pages = ((left + _MALI_OSK_CPU_PAGE_SIZE - 1) & ~(_MALI_OSK_CPU_PAGE_SIZE - 1)) >> _MALI_OSK_CPU_PAGE_ORDER;
 		MALI_DEBUG_PRINT(6, ("Allocating page array of size %d bytes\n", allocation->num_pages * sizeof(struct page*)));
 
-		while (left > 0 && ((info->num_pages_allocated + pages_allocated) < info->num_pages_max))
+		while (left > 0 && ((info->num_pages_allocated + pages_allocated) < info->num_pages_max) && _mali_osk_mem_check_allocated(os_mem_max_usage))
 		{
 			err = mali_allocation_engine_map_physical(engine, descriptor, *offset, MALI_MEMORY_ALLOCATION_OS_ALLOCATED_PHYSADDR_MAGIC, info->cpu_usage_adjust, _MALI_OSK_CPU_PAGE_SIZE);
 			if ( _MALI_OSK_ERR_OK != err)
@@ -168,8 +169,7 @@ static mali_physical_memory_allocation_result os_allocator_allocate(void* ctx, m
              * They zero the memory through a cached mapping, then flush the inner caches but not the outer caches.
              * This is required for MALI to have the correct view of the memory. 
              */
-            _mali_osk_cache_ensure_uncached_range_flushed( (void *)(((u32)descriptor->mapping) + allocation->offset_start), pages_allocated *_MALI_OSK_CPU_PAGE_SIZE );
-
+            _mali_osk_cache_ensure_uncached_range_flushed( (void *)descriptor, allocation->offset_start, pages_allocated *_MALI_OSK_CPU_PAGE_SIZE );
 			allocation->num_pages = pages_allocated;
 			allocation->engine = engine;         /* Necessary to make the engine's unmap call */
 			allocation->descriptor = descriptor; /* Necessary to make the engine's unmap call */
@@ -245,7 +245,7 @@ static mali_physical_memory_allocation_result os_allocator_allocate_page_table_b
 	/* Ensure we don't allocate more than we're supposed to from the ctx */
 	if (_MALI_OSK_ERR_OK != _mali_osk_lock_wait(info->mutex, _MALI_OSK_LOCKMODE_RW)) return MALI_MEM_ALLOC_INTERNAL_FAILURE;
 
-	if ( info->num_pages_allocated + pages_to_allocate > info->num_pages_max )
+	if ( (info->num_pages_allocated + pages_to_allocate > info->num_pages_max) && _mali_osk_mem_check_allocated(info->num_pages_max * _MALI_OSK_CPU_PAGE_SIZE) )
 	{
 		/* return OOM */
 		_mali_osk_lock_signal(info->mutex, _MALI_OSK_LOCKMODE_RW);

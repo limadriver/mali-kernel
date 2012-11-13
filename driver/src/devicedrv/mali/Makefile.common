@@ -26,13 +26,23 @@ UKKFILES=\
 	$(FILES_PREFIX)$(OSKOS)/mali_ukk_gp.c \
 	$(FILES_PREFIX)$(OSKOS)/mali_ukk_pp.c \
 	$(FILES_PREFIX)$(OSKOS)/mali_ukk_core.c
+	
+ifneq ($(USING_PROFILING),)
+UKKFILES+=\
+	$(FILES_PREFIX)$(OSKOS)/mali_ukk_profiling.c
+endif
 
 ifeq ($(MALI_PLATFORM_FILE),)
 MALI_PLATFORM_FILE=platform/default/mali_platform.c
 endif
 
-# Get subversion revision number, fall back to ${MALI_RELEASE_NAME} if no svn info is available
-SVN_REV:=$(shell (cd $(DRIVER_DIR); (svnversion | grep -qv exported && svnversion) || git svn info | grep '^Revision: '| sed -e 's/^Revision: //' || echo ${MALI_RELEASE_NAME}) 2>/dev/null )
+# Get subversion revision number, fall back to only ${MALI_RELEASE_NAME} if no svn info is available
+SVN_REV := $(shell (cd $(DRIVER_DIR); (svnversion | grep -qv exported && svnversion) || git svn info | grep '^Revision: '| sed -e 's/^Revision: //' ) 2>/dev/null )
+ifeq ($(SVN_REV),)
+SVN_REV := $(MALI_RELEASE_NAME)
+else
+SVN_REV := $(MALI_RELEASE_NAME)-r$(SVN_REV)
+endif
 
 # Common version-string, will be extended by OS-specifc sections
 VERSION_STRINGS =

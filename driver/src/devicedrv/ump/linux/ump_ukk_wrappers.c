@@ -136,3 +136,38 @@ int ump_size_get_wrapper(u32 __user * argument, struct ump_session_data  * sessi
 
 	return 0; /* success */
 }
+
+/*
+ * IOCTL operation; Return size for specified UMP memory.
+ */
+ int ump_msync_wrapper(u32 __user * argument, struct ump_session_data  * session_data)
+{
+	_ump_uk_msync_s user_interaction;
+
+	/* Sanity check input parameters */
+	if (NULL == argument || NULL == session_data)
+	{
+		MSG_ERR(("NULL parameter in ump_ioctl_size_get()\n"));
+		return -ENOTTY;
+	}
+
+	if (0 != copy_from_user(&user_interaction, argument, sizeof(user_interaction)))
+	{
+		MSG_ERR(("copy_from_user() in ump_ioctl_msync()\n"));
+		return -EFAULT;
+	}
+
+	user_interaction.ctx = (void *) session_data;
+
+	_ump_ukk_msync( &user_interaction );
+
+	user_interaction.ctx = NULL;
+
+	if (0 != copy_to_user(argument, &user_interaction, sizeof(user_interaction)))
+	{
+		MSG_ERR(("copy_to_user() failed in ump_ioctl_msync()\n"));
+		return -EFAULT;
+	}
+
+	return 0; /* success */
+}

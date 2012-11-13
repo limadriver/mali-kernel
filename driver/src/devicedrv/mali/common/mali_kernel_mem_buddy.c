@@ -47,7 +47,7 @@ struct mali_memory_block;
 /**
  * Definition of memory bank type.
  * Represents a memory bank (separate address space)
- * Each bank keeps track of it's block usage.
+ * Each bank keeps track of its block usage.
  * A buddy system used to track the usage
 */
 typedef struct mali_memory_bank
@@ -71,7 +71,7 @@ typedef struct mali_memory_bank
 /**
  * Definition of the memory block type
  * Represents a memory block, which is the smallest memory unit operated on.
- * A block keeps info about it's mapping, if in use by a user process
+ * A block keeps info about its mapping, if in use by a user process
  */
 typedef struct mali_memory_block
 {

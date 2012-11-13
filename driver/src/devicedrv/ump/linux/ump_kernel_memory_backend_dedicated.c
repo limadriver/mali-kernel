@@ -18,6 +18,7 @@
 #endif
 
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <asm/atomic.h>
 #include <linux/vmalloc.h>
 #include "ump_kernel_common.h"
@@ -103,6 +104,8 @@ ump_memory_backend * ump_block_allocator_create(u32 base_address, u32 size)
 				backend->allocate = block_allocator_allocate;
 				backend->release = block_allocator_release;
 				backend->shutdown = block_allocator_shutdown;
+				backend->pre_allocate_physical_check = NULL;
+				backend->adjust_to_mali_phys = NULL;
 
 				return backend;
 			}

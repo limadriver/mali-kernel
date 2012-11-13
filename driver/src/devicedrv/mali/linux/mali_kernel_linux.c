@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright (C) 2010 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
@@ -15,7 +15,7 @@
 #include <linux/module.h>   /* kernel module definitions */
 #include <linux/fs.h>       /* file system operations */
 #include <linux/cdev.h>     /* character device definitions */
-#include <linux/mm_types.h> /* memory mananger data types */
+#include <linux/mm.h> /* memory mananger definitions */
 #include <asm/uaccess.h>    /* user space access */
 #include <linux/device.h>
 
@@ -33,6 +33,7 @@
 #include "mali_ukk.h"
 #include "mali_kernel_ioctl.h"
 #include "mali_ukk_wrappers.h"
+#include "mali_kernel_pm.h"
 
 /* */
 #include "mali_kernel_license.h"
@@ -74,7 +75,12 @@ static struct mali_dev device;
 
 static int mali_open(struct inode *inode, struct file *filp);
 static int mali_release(struct inode *inode, struct file *filp);
+#ifdef HAVE_UNLOCKED_IOCTL
+static long mali_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+#else
 static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg);
+#endif
+
 static int mali_mmap(struct file * filp, struct vm_area_struct * vma);
 
 /* Linux char file operations provided by the Mali module */
@@ -83,15 +89,18 @@ struct file_operations mali_fops =
 	.owner = THIS_MODULE,
 	.open = mali_open,
 	.release = mali_release,
+#ifdef HAVE_UNLOCKED_IOCTL
+	.unlocked_ioctl = mali_ioctl,
+#else
 	.ioctl = mali_ioctl,
+#endif
 	.mmap = mali_mmap
 };
 
 
 int mali_driver_init(void)
 {
-    _mali_osk_errcode_t err;
-
+	int err;
     err = mali_kernel_constructor();
     if (_MALI_OSK_ERR_OK != err)
     {
@@ -104,7 +113,36 @@ int mali_driver_init(void)
 
 void mali_driver_exit(void)
 {
-    mali_kernel_destructor();
+
+#if USING_MALI_PMM
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM_RUNTIME
+#if MALI_PMM_RUNTIME_JOB_CONTROL_ON
+
+	_mali_osk_pmm_dev_activate();
+#endif
+#endif
+#endif
+#endif
+	 mali_kernel_destructor();
+
+#if USING_MALI_PMM
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM_RUNTIME
+#if MALI_PMM_RUNTIME_JOB_CONTROL_ON
+	_mali_osk_pmm_dev_idle();
+#endif
+#endif
+#endif
+#endif
+
+#if USING_MALI_PMM
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM
+	_mali_dev_platform_unregister();
+#endif
+#endif
+#endif
 }
 
 /* called from _mali_osk_init */
@@ -113,6 +151,17 @@ int initialize_kernel_device(void)
 	int err;
 	dev_t dev = 0;
 
+#if USING_MALI_PMM
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM
+	err = _mali_dev_platform_register();
+	if (err)
+	{
+		return err;
+	}
+#endif
+#endif
+#endif
 	if (0 == mali_major)
 	{
 		/* auto select a major */
@@ -261,13 +310,19 @@ int map_errcode( _mali_osk_errcode_t err )
     }
 }
 
+#ifdef HAVE_UNLOCKED_IOCTL
+static long mali_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+#else
 static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
+#endif
 {
     int err;
     struct mali_session_data *session_data;
 
+#ifndef HAVE_UNLOCKED_IOCTL
 	/* inode not used */
 	(void)inode;
+#endif
 
 	MALI_DEBUG_PRINT(7, ("Ioctl received 0x%08X 0x%08lX\n", cmd, arg));
 
@@ -300,6 +355,28 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
         case MALI_IOC_GET_API_VERSION:
             err = get_api_version_wrapper(session_data, (_mali_uk_get_api_version_s __user *)arg);
             break;
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+        case MALI_IOC_PROFILING_START:
+            err = profiling_start_wrapper(session_data, (_mali_uk_profiling_start_s __user *)arg);
+            break;
+
+		case MALI_IOC_PROFILING_ADD_EVENT:
+            err = profiling_add_event_wrapper(session_data, (_mali_uk_profiling_add_event_s __user *)arg);
+            break;
+
+		case MALI_IOC_PROFILING_STOP:
+            err = profiling_stop_wrapper(session_data, (_mali_uk_profiling_stop_s __user *)arg);
+            break;
+
+		case MALI_IOC_PROFILING_GET_EVENT:
+            err = profiling_get_event_wrapper(session_data, (_mali_uk_profiling_get_event_s __user *)arg);
+            break;
+
+		case MALI_IOC_PROFILING_CLEAR:
+            err = profiling_clear_wrapper(session_data, (_mali_uk_profiling_clear_s __user *)arg);
+            break;
+#endif
 
         case MALI_IOC_MEM_INIT:
             err = mem_init_wrapper(session_data, (_mali_uk_init_mem_s __user *)arg);

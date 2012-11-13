@@ -49,12 +49,11 @@ static _mali_osk_resource_t arch_configuration [] =
 	{
 		.type = OS_MEMORY,
 		.description = "OS Memory",
-		.cpu_usage_adjust = -0x50000000,
 		.alloc_order = 10, /* Lowest preference for this memory */
-		.base = 0x78000000, /* aim to use map=120M@1920M */
 		.size = 0x04000000, /* 64MB, to avoid OOM-killer */
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
+#endif /** USING_OS_MEMORY */
 	{
 		.type = MEMORY,
 		.description = "Mali SDRAM remapped to baseboard",
@@ -69,23 +68,6 @@ static _mali_osk_resource_t arch_configuration [] =
 #endif /* MALI_USE_UNIFIED_MEMORY_PROVIDER != 0 */
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
-
-#else /* USING_OS_MEMORY */
-	{
-		.type = MEMORY,
-		.description = "Mali SDRAM remapped to baseboard",
-		.cpu_usage_adjust = -0x50000000,
-		.alloc_order = 0, /* Highest preference for this memory */
-#if MALI_USE_UNIFIED_MEMORY_PROVIDER != 0
-		.base = 0xCA000000, /* Reserving 32MB for UMP devicedriver */
-		.size = 0x16000000,
-#else
-		.base = 0xC8000000,
-		.size = 0x18000000,
-#endif /* MALI_USE_UNIFIED_MEMORY_PROVIDER != 0 */
-		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
-	},
-#endif /** USING_OS_MEMORY */
 #endif /* ! ONLY_ZBT */
 
 #if USING_ZBT
@@ -93,8 +75,8 @@ static _mali_osk_resource_t arch_configuration [] =
 		.type = MEMORY,
 		.description = "Mali ZBT",
 		.alloc_order = 5, /* Medium preference for this memory */
-		.base = 0xe0600000,
-		.size = 0x01a00000,
+		.base = 0xe1000000,
+		.size = 0x01000000,
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
 #endif /* USING_ZBT */
@@ -102,7 +84,7 @@ static _mali_osk_resource_t arch_configuration [] =
 		.type = MEM_VALIDATION,
 		.description = "Framebuffer",
 		.base = 0xe0000000,
-		.size = 0x00600000,
+		.size = 0x01000000,
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_WRITEABLE | _MALI_PP_READABLE
 	},
 

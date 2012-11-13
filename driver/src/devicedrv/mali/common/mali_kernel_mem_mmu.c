@@ -58,12 +58,12 @@
 
 /**
  * Extract the memory address from an PDE/PTE entry
-*/
+ */
 #define MALI_MMU_ENTRY_ADDRESS(value) ((value) & 0xFFFFFC00)
 
 /**
  * Linux kernel version has marked SA_SHIRQ as deprecated, IRQF_SHARED should be used.
- * This is to handle older kernels which hasn't done this swap.
+ * This is to handle older kernels which haven't done this swap.
  */
 #ifndef IRQF_SHARED
 #define IRQF_SHARED SA_SHIRQ
@@ -197,7 +197,7 @@ typedef struct mali_kernel_memory_mmu
 	mali_io_address mapped_registers; /**< Virtual mapping of the registers */
 	u32 mapping_size; /**< Size of registers in bytes */
 	_mali_osk_list_t list; /**< Used to link multiple MMU's into a list */
-    _mali_osk_irq_t *irq;
+	_mali_osk_irq_t *irq;
 	u32 flags; /**< Used to store if there is something special with this mmu. */
 
 	_mali_osk_lock_t *lock; /**< Lock protecting access to the usage fields */
@@ -239,7 +239,7 @@ typedef struct external_mem_allocation
 } external_mem_allocation;
 
 /*
-	Subsystem interface implementation
+   Subsystem interface implementation
 */
 /**
  * Fixed block memory subsystem startup function.
@@ -375,8 +375,8 @@ static void mali_mmu_register_write(mali_kernel_memory_mmu * unit, mali_mmu_regi
 
 
 #if MALI_USE_UNIFIED_MEMORY_PROVIDER != 0
-	static void ump_memory_release(void * ctx, void * handle);
-	static mali_physical_memory_allocation_result ump_memory_commit(void* ctx, mali_allocation_engine * engine, mali_memory_allocation * descriptor, u32* offset, mali_physical_memory_allocation * alloc_info);
+static void ump_memory_release(void * ctx, void * handle);
+static mali_physical_memory_allocation_result ump_memory_commit(void* ctx, mali_allocation_engine * engine, mali_memory_allocation * descriptor, u32* offset, mali_physical_memory_allocation * alloc_info);
 #endif /* MALI_USE_UNIFIED_MEMORY_PROVIDER != 0*/
 
 
@@ -400,10 +400,6 @@ void mali_mmu_page_table_cache_destroy(void);
 
 _mali_osk_errcode_t mali_mmu_get_table_page(u32 *table_page, mali_io_address *mapping);
 void mali_mmu_release_table_page(u32 pa);
-
-/*extern struct mali_subsystem_memory_backend_operations backend_exclusive_memory_operations;
-extern struct mali_subsystem_memory_backend_operations backend_os_memory_operations;
-*/
 
 static _mali_osk_errcode_t mali_allocate_empty_page_directory(void);
 
@@ -444,7 +440,7 @@ static _MALI_OSK_LIST_HEAD(mmu_head);
 static struct mali_mmu_page_table_allocations page_table_cache;
 
 /* page fault queue flush helper pages
- * note that the mapping pointers are currently unused outside of the initalization functions */
+ * note that the mapping pointers are currently unused outside of the initialization functions */
 static u32 mali_page_fault_flush_page_directory = MALI_INVALID_PAGE;
 static mali_io_address mali_page_fault_flush_page_directory_mapping = NULL;
 static u32 mali_page_fault_flush_page_table = MALI_INVALID_PAGE;
@@ -456,8 +452,8 @@ static mali_io_address mali_page_fault_flush_data_page_mapping = NULL;
 static u32 mali_empty_page_directory = MALI_INVALID_PAGE;
 
 /*
-	The fixed memory system's mali subsystem interface implementation.
-	We currently handle module and session life-time management.
+   The fixed memory system's mali subsystem interface implementation.
+   We currently handle module and session life-time management.
 */
 struct mali_kernel_subsystem mali_subsystem_memory =
 {
@@ -474,7 +470,7 @@ static mali_kernel_mem_address_manager mali_address_manager =
 {
 	mali_address_manager_allocate, /* allocate */
 	mali_address_manager_release,  /* release */
-    mali_address_manager_map,      /* map_physical */
+	mali_address_manager_map,      /* map_physical */
 	NULL                           /* unmap_physical not present*/
 };
 
@@ -506,7 +502,7 @@ static _mali_osk_errcode_t mali_memory_core_initialize(mali_kernel_subsystem_ide
 
 	_MALI_OSK_INIT_LIST_HEAD(&mmu_head);
 
-    MALI_CHECK_NO_ERROR( mali_mmu_page_table_cache_create() );
+	MALI_CHECK_NO_ERROR( mali_mmu_page_table_cache_create() );
 
 	/* register our handlers */
 	MALI_CHECK_NO_ERROR( _mali_kernel_core_register_resource_handler(MMU, mali_memory_core_resource_mmu) );
@@ -515,12 +511,12 @@ static _mali_osk_errcode_t mali_memory_core_initialize(mali_kernel_subsystem_ide
 
 	MALI_CHECK_NO_ERROR( _mali_kernel_core_register_resource_handler(MEMORY, mali_memory_core_resource_dedicated_memory) );
 
-    MALI_CHECK_NO_ERROR( _mali_kernel_core_register_resource_handler(OS_MEMORY, mali_memory_core_resource_os_memory) );
+	MALI_CHECK_NO_ERROR( _mali_kernel_core_register_resource_handler(OS_MEMORY, mali_memory_core_resource_os_memory) );
 
-    memory_engine = mali_allocation_engine_create(&mali_address_manager, &process_address_manager);
-    MALI_CHECK_NON_NULL( memory_engine, _MALI_OSK_ERR_FAULT);
+	memory_engine = mali_allocation_engine_create(&mali_address_manager, &process_address_manager);
+	MALI_CHECK_NON_NULL( memory_engine, _MALI_OSK_ERR_FAULT);
 
-    MALI_SUCCESS;
+	MALI_SUCCESS;
 }
 
 /* called if/when our module is unloaded */
@@ -537,13 +533,13 @@ static void mali_memory_core_terminate(mali_kernel_subsystem_identifier id)
 		mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_SOFT_RESET);
 
 		/* unregister the irq */
-        _mali_osk_irq_term(mmu->irq);
+		_mali_osk_irq_term(mmu->irq);
 
 		/* remove from the list of MMU's on the system */
 		_mali_osk_list_del(&mmu->list);
 
 		/* release resources */
-        _mali_osk_mem_unmapioregion(mmu->base, mmu->mapping_size, mmu->mapped_registers);
+		_mali_osk_mem_unmapioregion(mmu->base, mmu->mapping_size, mmu->mapped_registers);
 		_mali_osk_mem_unreqregion(mmu->base, mmu->mapping_size);
 		_mali_osk_free(mmu);
 	}
@@ -583,7 +579,7 @@ static void mali_memory_core_terminate(mali_kernel_subsystem_identifier id)
 static _mali_osk_errcode_t mali_memory_core_session_begin(struct mali_session_data * mali_session_data, mali_kernel_subsystem_session_slot * slot, _mali_osk_notification_queue_t * queue)
 {
 	memory_session * session_data;
-    _mali_osk_errcode_t err;
+	_mali_osk_errcode_t err;
 	int i;
 	mali_io_address pd_mapped;
 
@@ -591,20 +587,20 @@ static _mali_osk_errcode_t mali_memory_core_session_begin(struct mali_session_da
 	if (NULL == slot)
 	{
 		MALI_DEBUG_PRINT(1, ("NULL slot given to memory session begin\n"));
-        MALI_ERROR(_MALI_OSK_ERR_INVALID_ARGS);
+		MALI_ERROR(_MALI_OSK_ERR_INVALID_ARGS);
 	}
 
 	if (NULL != *slot)
 	{
 		MALI_DEBUG_PRINT(1, ("The slot given to memory session begin already contains data"));
-        MALI_ERROR(_MALI_OSK_ERR_INVALID_ARGS);
+		MALI_ERROR(_MALI_OSK_ERR_INVALID_ARGS);
 	}
 
 	MALI_DEBUG_PRINT(2, ("MMU session begin\n"));
 
 	/* create the session data object */
 	session_data = _mali_osk_calloc(1, sizeof(memory_session));
-    MALI_CHECK_NON_NULL( session_data, _MALI_OSK_ERR_NOMEM );
+	MALI_CHECK_NON_NULL( session_data, _MALI_OSK_ERR_NOMEM );
 
 	/* create descriptor mapping table */
 	session_data->descriptor_mapping = mali_descriptor_mapping_create(MALI_MEM_DESCRIPTORS_INIT, MALI_MEM_DESCRIPTORS_MAX);
@@ -612,17 +608,17 @@ static _mali_osk_errcode_t mali_memory_core_session_begin(struct mali_session_da
 	if (NULL == session_data->descriptor_mapping)
 	{
 		_mali_osk_free(session_data);
-        MALI_ERROR(_MALI_OSK_ERR_NOMEM);
+		MALI_ERROR(_MALI_OSK_ERR_NOMEM);
 	}
 
 	err = mali_mmu_get_table_page(&session_data->page_directory, &pd_mapped);
 
 	session_data->page_directory_mapped = pd_mapped;
-    if (_MALI_OSK_ERR_OK != err)
-    {
+	if (_MALI_OSK_ERR_OK != err)
+	{
 		mali_descriptor_mapping_destroy(session_data->descriptor_mapping);
 		_mali_osk_free(session_data);
-        MALI_ERROR(err);
+		MALI_ERROR(err);
 	}
 	MALI_DEBUG_ASSERT_POINTER( session_data->page_directory_mapped );
 
@@ -637,20 +633,20 @@ static _mali_osk_errcode_t mali_memory_core_session_begin(struct mali_session_da
 	/* page_table_mapped[] is already set to NULL by _mali_osk_calloc call */
 
 	_MALI_OSK_INIT_LIST_HEAD(&session_data->active_mmus);
-    session_data->lock = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_ORDERED | _MALI_OSK_LOCKFLAG_ONELOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 128);
-    if (NULL == session_data->lock)
-    {
+	session_data->lock = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_ORDERED | _MALI_OSK_LOCKFLAG_ONELOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 128);
+	if (NULL == session_data->lock)
+	{
 		mali_mmu_release_table_page(session_data->page_directory);
 		mali_descriptor_mapping_destroy(session_data->descriptor_mapping);
 		_mali_osk_free(session_data);
-        MALI_ERROR(_MALI_OSK_ERR_FAULT);
-    }
+		MALI_ERROR(_MALI_OSK_ERR_FAULT);
+	}
 
 	/* Init the session's memory allocation list */
 	_MALI_OSK_INIT_LIST_HEAD( &session_data->memory_head );
 
 	*slot = session_data; /* slot will point to our data object */
-    MALI_DEBUG_PRINT(2, ("MMU session begin: success\n"));
+	MALI_DEBUG_PRINT(2, ("MMU session begin: success\n"));
 	MALI_SUCCESS;
 }
 
@@ -713,8 +709,8 @@ static void mali_memory_core_session_end(struct mali_session_data * mali_session
 		_MALI_OSK_LIST_FOREACHENTRY(descriptor, temp, &session_data->memory_head, mali_memory_allocation, list)
 		{
 			MALI_DEBUG_PRINT(4, ("Freeing block with mali address 0x%x size %d mapped in user space at 0x%x\n",
-								 descriptor->mali_address, descriptor->size, descriptor->size, descriptor->mapping)
-							 );
+						descriptor->mali_address, descriptor->size, descriptor->size, descriptor->mapping)
+					);
 			/* ASSERT that the descriptor's lock references the correct thing */
 			MALI_DEBUG_ASSERT(  descriptor->lock == session_data->lock );
 			/* Therefore, we have already locked the descriptor */
@@ -782,20 +778,20 @@ static void mali_memory_core_session_end(struct mali_session_data * mali_session
 
 static _mali_osk_errcode_t mali_allocate_empty_page_directory(void)
 {
-    _mali_osk_errcode_t err;
+	_mali_osk_errcode_t err;
 	mali_io_address mapping;
 
-    MALI_CHECK_NO_ERROR(mali_mmu_get_table_page(&mali_empty_page_directory, &mapping));
+	MALI_CHECK_NO_ERROR(mali_mmu_get_table_page(&mali_empty_page_directory, &mapping));
 
 	MALI_DEBUG_ASSERT_POINTER( mapping );
 
 	err = fill_page(mapping, 0);
-    if (_MALI_OSK_ERR_OK != err)
+	if (_MALI_OSK_ERR_OK != err)
 	{
 		mali_mmu_release_table_page(mali_empty_page_directory);
 		mali_empty_page_directory = MALI_INVALID_PAGE;
 	}
-    return err;
+	return err;
 }
 
 static void mali_free_empty_page_directory(void)
@@ -877,7 +873,7 @@ static _mali_osk_errcode_t mali_memory_core_load_complete(mali_kernel_subsystem_
 	mali_allocation_engine_report_allocators( physical_memory_allocators );
 
 	/* allocate the helper pages */
-    MALI_CHECK_NO_ERROR( mali_allocate_empty_page_directory() );
+	MALI_CHECK_NO_ERROR( mali_allocate_empty_page_directory() );
 	if (_MALI_OSK_ERR_OK != mali_allocate_fault_flush_pages())
 	{
 		mali_free_empty_page_directory();
@@ -894,7 +890,7 @@ static _mali_osk_errcode_t mali_memory_core_load_complete(mali_kernel_subsystem_
 	MALI_DEBUG_PRINT(4, ("MMUs activated\n"));
 	/* the MMU system is now active */
 
-    MALI_SUCCESS;
+	MALI_SUCCESS;
 }
 
 static _mali_osk_errcode_t mali_memory_core_system_info_fill(_mali_system_info* info)
@@ -907,7 +903,7 @@ static _mali_osk_errcode_t mali_memory_core_system_info_fill(_mali_system_info* 
 	info->has_mmu = 1;
 
 	mem_info = _mali_osk_calloc(1,sizeof(_mali_mem_info));
-    MALI_CHECK_NON_NULL( mem_info, _MALI_OSK_ERR_NOMEM );
+	MALI_CHECK_NON_NULL( mem_info, _MALI_OSK_ERR_NOMEM );
 
 	mem_info->size = 2048UL * 1024UL * 1024UL;
 	mem_info->maximum_order_supported = 30;
@@ -925,8 +921,8 @@ static _mali_osk_errcode_t mali_memory_core_resource_mmu(_mali_osk_resource_t * 
 	mali_kernel_memory_mmu * mmu;
 
 	MALI_DEBUG_PRINT(4, ("MMU '%s' @ (0x%08X - 0x%08X)\n",
-	resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1
-	));
+				resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1
+				));
 
 	if (NULL != mali_memory_core_mmu_lookup(resource->mmu_id))
 	{
@@ -939,8 +935,8 @@ static _mali_osk_errcode_t mali_memory_core_resource_mmu(_mali_osk_resource_t * 
 		/* specified addresses are already in used by another driver / the kernel */
 		MALI_DEBUG_PRINT(
 				1, ("Failed to request MMU '%s' register address space at (0x%08X - 0x%08X)\n",
-				resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1
-			   ));
+					resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1
+				   ));
 		MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
 
@@ -966,32 +962,32 @@ static _mali_osk_errcode_t mali_memory_core_resource_mmu(_mali_osk_resource_t * 
 	_MALI_OSK_INIT_LIST_HEAD(&mmu->session_link);
 	mmu->in_page_fault_handler = 0;
 
-    mmu->lock = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_ORDERED | _MALI_OSK_LOCKFLAG_ONELOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 127-mmu->id);
-    if (NULL == mmu->lock)
-    {
+	mmu->lock = _mali_osk_lock_init( _MALI_OSK_LOCKFLAG_ORDERED | _MALI_OSK_LOCKFLAG_ONELOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 127-mmu->id);
+	if (NULL == mmu->lock)
+	{
 		MALI_DEBUG_PRINT(1, ("Failed to create mmu lock\n"));
 		_mali_osk_mem_unreqregion(mmu->base, mmu->mapping_size);
 		_mali_osk_free(mmu);
 		MALI_ERROR(_MALI_OSK_ERR_FAULT);
-    }
+	}
 
-    /* map the registers */
+	/* map the registers */
 	mmu->mapped_registers = _mali_osk_mem_mapioregion( mmu->base, mmu->mapping_size, mmu->description );
 	if (NULL == mmu->mapped_registers)
 	{
 		/* failed to map the registers */
 		MALI_DEBUG_PRINT(1, ("Failed to map MMU registers at 0x%08X\n", mmu->base));
-        _mali_osk_lock_term(mmu->lock);
+		_mali_osk_lock_term(mmu->lock);
 		_mali_osk_mem_unreqregion(mmu->base, MALI_MMU_REGISTERS_SIZE);
 		_mali_osk_free(mmu);
 		MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
 
 	MALI_DEBUG_PRINT(4, ("MMU '%s' @ (0x%08X - 0x%08X) mapped to 0x%08X\n",
-	resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1,  mmu->mapped_registers
-	));
+				resource->description, resource->base, resource->base + MALI_MMU_REGISTERS_SIZE - 1,  mmu->mapped_registers
+				));
 
-    /* setup MMU interrupt mask */
+	/* setup MMU interrupt mask */
 	/* set all values to known defaults */
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_SOFT_RESET);
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_INT_MASK, MALI_MMU_INTERRUPT_PAGE_FAULT | MALI_MMU_INTERRUPT_READ_BUS_ERROR);
@@ -1002,24 +998,24 @@ static _mali_osk_errcode_t mali_memory_core_resource_mmu(_mali_osk_resource_t * 
 	/* add to our list of MMU's */
 	_mali_osk_list_addtail(&mmu->list, &mmu_head);
 
-    mmu->irq = _mali_osk_irq_init(
-                            mmu->irq_nr,
-                            mali_kernel_memory_mmu_interrupt_handler_upper_half,
-                            mali_kernel_memory_mmu_interrupt_handler_bottom_half,
-                            (_mali_osk_irq_trigger_t)mali_mmu_probe_irq_trigger,
-                            (_mali_osk_irq_ack_t)mali_mmu_probe_irq_acknowledge,
-                            mmu,
-                            "mali_mmu_irq_handlers"
-                            );
-    if (NULL == mmu->irq)
-    {
-    	_mali_osk_list_del(&mmu->list);
-        _mali_osk_lock_term(mmu->lock);
-    	_mali_osk_mem_unmapioregion( mmu->base, mmu->mapping_size, mmu->mapped_registers );
+	mmu->irq = _mali_osk_irq_init(
+			mmu->irq_nr,
+			mali_kernel_memory_mmu_interrupt_handler_upper_half,
+			mali_kernel_memory_mmu_interrupt_handler_bottom_half,
+			(_mali_osk_irq_trigger_t)mali_mmu_probe_irq_trigger,
+			(_mali_osk_irq_ack_t)mali_mmu_probe_irq_acknowledge,
+			mmu,
+			"mali_mmu_irq_handlers"
+			);
+	if (NULL == mmu->irq)
+	{
+		_mali_osk_list_del(&mmu->list);
+		_mali_osk_lock_term(mmu->lock);
+		_mali_osk_mem_unmapioregion( mmu->base, mmu->mapping_size, mmu->mapped_registers );
 		_mali_osk_mem_unreqregion(resource->base, MALI_MMU_REGISTERS_SIZE);
 		_mali_osk_free(mmu);
 		MALI_ERROR(_MALI_OSK_ERR_FAULT);
-    }
+	}
 
 	/* set to a known state */
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_SOFT_RESET);
@@ -1035,23 +1031,23 @@ static _mali_osk_errcode_t mali_memory_core_resource_fpga(_mali_osk_resource_t *
 	mali_io_address mapping;
 
 	MALI_DEBUG_PRINT(5, ("FPGA framework '%s' @ (0x%08X - 0x%08X)\n",
-			resource->description, resource->base, resource->base + sizeof(u32) * 2 - 1
-		   ));
+				resource->description, resource->base, resource->base + sizeof(u32) * 2 - 1
+				));
 
 	mapping = _mali_osk_mem_mapioregion(resource->base + 0x1000, sizeof(u32) * 2, "fpga framework");
 	if (mapping)
 	{
 		MALI_DEBUG_CODE(u32 data = )
-		_mali_osk_mem_ioread32(mapping, 0);
+			_mali_osk_mem_ioread32(mapping, 0);
 		MALI_DEBUG_PRINT(2, ("FPGA framwork '%s' @ 0x%08X:\n", resource->description, resource->base));
 		MALI_DEBUG_PRINT(2, ("\tBitfile date: %d%02d%02d_%02d%02d\n",
-					  (data >> 20),
-					  (data >> 16) & 0xF,
-					  (data >> 11) & 0x1F,
-					  (data >> 6)  & 0x1F,
-					  (data >> 0)  & 0x3F));
+					(data >> 20),
+					(data >> 16) & 0xF,
+					(data >> 11) & 0x1F,
+					(data >> 6)  & 0x1F,
+					(data >> 0)  & 0x3F));
 		MALI_DEBUG_CODE(data = )
-		_mali_osk_mem_ioread32(mapping, sizeof(u32));
+			_mali_osk_mem_ioread32(mapping, sizeof(u32));
 		MALI_DEBUG_PRINT(2, ("\tBitfile SCCS rev: %d\n", data));
 
 		_mali_osk_mem_unmapioregion(resource->base + 0x1000, sizeof(u32) *2, mapping);
@@ -1117,7 +1113,7 @@ static _mali_osk_errcode_t mali_memory_core_resource_dedicated_memory(_mali_osk_
 	{
 		MALI_DEBUG_PRINT(1, ("Memory bank registration failed\n"));
 		_mali_osk_mem_unreqregion(resource->base, resource->size);
-        MALI_ERROR(_MALI_OSK_ERR_FAULT);
+		MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
 
 	/* save lowlevel cleanup info */
@@ -1158,14 +1154,12 @@ static _mali_osk_errcode_t mali_kernel_memory_mmu_interrupt_handler_upper_half(v
 {
 	mali_kernel_memory_mmu * mmu;
 	u32 int_stat;
-	
-	MALI_DEBUG_PRINT(1, ("mali_kernel_memory_mmu_interrupt_handler_upper_half\n"));
 
 	if (mali_benchmark) MALI_SUCCESS;
 
-    mmu = (mali_kernel_memory_mmu *)data;
+	mmu = (mali_kernel_memory_mmu *)data;
 
-    MALI_DEBUG_ASSERT_POINTER(mmu);
+	MALI_DEBUG_ASSERT_POINTER(mmu);
 
 	/* check if it was our device which caused the interrupt (we could be sharing the IRQ line) */
 	int_stat = mali_mmu_register_read(mmu, MALI_MMU_REGISTER_INT_STATUS);
@@ -1174,6 +1168,8 @@ static _mali_osk_errcode_t mali_kernel_memory_mmu_interrupt_handler_upper_half(v
 		MALI_DEBUG_PRINT(5, ("Ignoring shared interrupt\n"));
 		MALI_ERROR(_MALI_OSK_ERR_FAULT); /* no bits set, we are sharing the IRQ line and someone else caused the interrupt */
 	}
+
+	MALI_DEBUG_PRINT(1, ("mali_kernel_memory_mmu_interrupt_handler_upper_half\n"));
 
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_INT_MASK, 0);
 
@@ -1201,9 +1197,11 @@ static _mali_osk_errcode_t mali_kernel_memory_mmu_interrupt_handler_upper_half(v
 static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 {
 
+#if defined(USING_MALI200)
 	int i;
 	const int replay_buffer_check_interval = 10; /* must be below 1000 */
 	const int replay_buffer_max_number_of_checks = 100;
+#endif
 
 	_mali_osk_lock_wait(mmu->lock, _MALI_OSK_LOCKMODE_RW);
 	/* add an extra reference while handling the page fault */
@@ -1214,6 +1212,7 @@ static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 	/* request to stop the bus, but don't wait for it to actually stop */
 	_mali_kernel_core_broadcast_subsystem_message(MMU_KILL_STEP1_STOP_BUS_FOR_ALL_CORES, (u32)mmu);
 
+#if defined(USING_MALI200)
 	/* no new request will come from any of the connected cores from now
 	 * we must now flush the playback buffer for any requests queued already
 	 */
@@ -1221,11 +1220,9 @@ static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 	/* don't use the mali_mmu_activate_address_space function here as we can't stall the MMU */
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_DTE_ADDR, mali_page_fault_flush_page_directory);
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_ZAP_CACHE);
-
 	/* resume the MMU */
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_INT_CLEAR, MALI_MMU_INTERRUPT_PAGE_FAULT);
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_PAGE_FAULT_DONE);
-
 	/* the MMU will now play back all the requests, all going to our special page fault flush data page */
 
 	/* just to be safe, check that the playback buffer is empty before continuing */
@@ -1237,8 +1234,9 @@ static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 		}
 
 		MALI_DEBUG_PRINT_IF(1, i == replay_buffer_max_number_of_checks, ("MMU: %s: Failed to flush replay buffer on page fault\n", mmu->description));
+		MALI_DEBUG_PRINT(1, ("Replay playback took %ld usec\n", i * replay_buffer_check_interval));
 	}
-
+#endif
 	/* notify all subsystems that the core should be reset once the bus is actually stopped */
 	MALI_DEBUG_PRINT(4,("Sending job abort command to subsystems\n"));
 	_mali_kernel_core_broadcast_subsystem_message(MMU_KILL_STEP2_RESET_ALL_CORES_AND_ABORT_THEIR_JOBS, (u32)mmu);
@@ -1252,10 +1250,11 @@ static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 	/* resume normal operation */
 	_mali_kernel_core_broadcast_subsystem_message(MMU_KILL_STEP3_CONTINUE_JOB_HANDLING, (u32)mmu);
 
+	MALI_DEBUG_PRINT(4, ("Page fault handling complete\n"));
+
 	/* release the extra address space reference, will schedule */
 	mali_memory_core_mmu_release_address_space_reference(mmu);
 
-	MALI_DEBUG_PRINT(4, ("Page fault handled\n"));
 }
 
 void mali_kernel_mmu_reset(void * input_mmu)
@@ -1366,7 +1365,7 @@ static void mali_kernel_memory_mmu_interrupt_handler_bottom_half(void * data)
 		}
 		else
 		{
-			MALI_PRINT(("PTE entry: Not present"));
+			MALI_PRINT(("PTE entry: Not present\n"));
 		}
 	}
 
@@ -1384,13 +1383,23 @@ static void mali_kernel_memory_mmu_interrupt_handler_bottom_half(void * data)
 
 static u32 mali_mmu_register_read(mali_kernel_memory_mmu * unit, mali_mmu_register reg)
 {
+	u32 val;
+
 	if (mali_benchmark) return 0;
-	return _mali_osk_mem_ioread32(unit->mapped_registers, (u32)reg * sizeof(u32));
+
+	val = _mali_osk_mem_ioread32(unit->mapped_registers, (u32)reg * sizeof(u32));
+
+	MALI_DEBUG_PRINT(6, ("mali_mmu_register_read addr:0x%04X val:0x%08x\n", (u32)reg * sizeof(u32),val));
+
+	return val;
 }
 
 static void mali_mmu_register_write(mali_kernel_memory_mmu * unit, mali_mmu_register reg, u32 val)
 {
 	if (mali_benchmark) return;
+
+	MALI_DEBUG_PRINT(6, ("mali_mmu_register_write  addr:0x%04X val:0x%08x\n", (u32)reg * sizeof(u32), val));
+
 	_mali_osk_mem_iowrite32(unit->mapped_registers, (u32)reg * sizeof(u32), val);
 }
 
@@ -2457,7 +2466,7 @@ static void mali_address_manager_release(mali_memory_allocation * descriptor)
 	}
 
 #if defined USING_MALI400_L2_CACHE
-	if (1 == page_dir_updated)
+	if ((1 == page_dir_updated) && (1== has_active_mmus))
 	{
 		/* The page directory was also updated */
 		mali_kernel_l2_cache_invalidate_page(session_data->page_directory);
@@ -2500,7 +2509,7 @@ static _mali_osk_errcode_t mali_address_manager_map(mali_memory_allocation * des
 	}
 #endif
 
-	MALI_DEBUG_PRINT(4, ("Mali map: mapping 0x%08X to Mali address 0x%08X length 0x%08X\n", current_phys_addr, mali_address, size));
+	MALI_DEBUG_PRINT(6, ("Mali map: mapping 0x%08X to Mali address 0x%08X length 0x%08X\n", current_phys_addr, mali_address, size));
 
     MALI_DEBUG_ASSERT_POINTER(session_data->page_entries_mapped);
 

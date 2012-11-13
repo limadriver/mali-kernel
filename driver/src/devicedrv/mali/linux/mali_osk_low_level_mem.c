@@ -20,6 +20,7 @@
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/dma-mapping.h>
 #include <asm/cacheflush.h>
 
 #include "mali_osk.h"
@@ -168,83 +169,37 @@ void _mali_osk_mem_unmapioregion( u32 phys, u32 size, mali_io_address virt )
 
 mali_io_address _mali_osk_mem_allocioregion( u32 *phys, u32 size )
 {
-	void *virt;
-	u32 new_phys;
-	struct page * pages;
-	u32 alloc_order;
-	u32 page_order;
-	u32 leading_zeros;
+	void * virt;
+ 	MALI_DEBUG_ASSERT_POINTER( phys );
+ 	MALI_DEBUG_ASSERT( 0 == (size & ~_MALI_OSK_CPU_PAGE_MASK) );
+ 	MALI_DEBUG_ASSERT( 0 != size );
 
-	MALI_DEBUG_ASSERT_POINTER( phys );
-	MALI_DEBUG_ASSERT( 0 == (size & ~_MALI_OSK_CPU_PAGE_MASK) );
-	MALI_DEBUG_ASSERT( 0 != size );
+	/* dma_alloc_* uses a limited region of address space. On most arch/marchs
+	 * 2 to 14 MiB is available. This should be enough for the page tables, which
+	 * currently is the only user of this function. */
+	virt = dma_alloc_coherent(NULL, size, phys, GFP_KERNEL | GFP_DMA32 );
 
-	/* Generate an order from the allocation size. Only really expecting 2^n sizes */
-	leading_zeros = _mali_osk_clz( size );
-	alloc_order = 31 - leading_zeros; /* size != 0, so 32 != clz */
-	if ( (1 << alloc_order) != size )
-	{
-		++alloc_order;
-		MALI_DEBUG_PRINT(1, ("Warning: wasting memory because %.8X was requested, but must be rounded up to %.8X\n", size, 1 << alloc_order ));
-	}
+	MALI_DEBUG_PRINT(3, ("Page table virt: 0x%x = dma_alloc_coherent(size:%d, phys:0x%x, )\n", virt, size, phys));
 
-	page_order = alloc_order - PAGE_SHIFT;
+ 	if ( NULL == virt )
+ 	{
+		MALI_DEBUG_PRINT(1, ("allocioregion: Failed to allocate Pagetable memory, size=0x%.8X\n", size ));
+		MALI_DEBUG_PRINT(1, ("Solution: When configuring and building linux kernel, set CONSISTENT_DMA_SIZE to be 14 MB.\n"));
+ 		return 0;
+ 	}
 
-	MALI_DEBUG_PRINT(4, ("allocioregion: size=0x%.8X, order=%d\n", size, page_order ));
+	MALI_DEBUG_ASSERT( 0 == (*phys & ~_MALI_OSK_CPU_PAGE_MASK) );
 
-	pages = alloc_pages(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN, page_order );
-
-	if ( NULL == pages )
-	{
-		MALI_DEBUG_PRINT(4, ("allocioregion ran out of memory on size=0x%.8X, order=%d\n", size, page_order ));
-		return 0;
-	}
-
-	new_phys = page_to_phys( pages );
-	MALI_DEBUG_PRINT(4, ("allocioregion: new_phys=0x%.8X\n", new_phys ));
-
-	virt = ioremap_nocache( new_phys, size );
-
-	if ( NULL == virt )
-	{
-		MALI_DEBUG_PRINT(1, ("allocioregion: Failed to map phys=0x%.8X, size=0x%.8X\n", new_phys, size ));
-		__free_pages( pages, page_order );
-		return 0;
-	}
-
-	MALI_DEBUG_ASSERT( 0 == (new_phys & ~_MALI_OSK_CPU_PAGE_MASK) );
-	*phys = new_phys;
-
-	return (mali_io_address)virt;
+ 	return (mali_io_address)virt;
 }
 
 void _mali_osk_mem_freeioregion( u32 phys, u32 size, mali_io_address virt )
 {
-	struct page *pages;
-	u32 alloc_order;
-	u32 page_order;
-	u32 leading_zeros;
+ 	MALI_DEBUG_ASSERT_POINTER( (void*)virt );
+ 	MALI_DEBUG_ASSERT( 0 != size );
+ 	MALI_DEBUG_ASSERT( 0 == (phys & ( (1 << PAGE_SHIFT) - 1 )) );
 
-	MALI_DEBUG_ASSERT_POINTER( (void*)virt );
-
-	MALI_DEBUG_ASSERT( 0 != size );
-
-	MALI_DEBUG_ASSERT( 0 == (phys & ( (1 << PAGE_SHIFT) - 1 )) );
-
-	iounmap((void*)virt);
-
-	pages = pfn_to_page( phys >> PAGE_SHIFT );
-
-	MALI_DEBUG_ASSERT_POINTER( pages );
-
-	/* Generate an order from the allocation size. Only really expecting 2^n sizes.
-	 * This is the same order generated as in _mali_osk_mem_allocioregion */
-	leading_zeros = _mali_osk_clz( size );
-	alloc_order = 31 - leading_zeros; /* size != 0, so 32 != clz */
-
-	page_order = alloc_order - PAGE_SHIFT;
-
-	__free_pages( pages, page_order );
+	dma_free_coherent(NULL, size, virt, phys);
 }
 
 _mali_osk_errcode_t inline _mali_osk_mem_reqregion( u32 phys, u32 size, const char *description )
@@ -272,7 +227,7 @@ void _mali_osk_cache_flushall( void )
     /** @note Cached memory is not currently supported in this implementation */
 }
 
-void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 size )
+void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 offset, u32 size )
 {
 	wmb();
 }
@@ -401,12 +356,10 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
 	if ( MALI_MEMORY_ALLOCATION_OS_ALLOCATED_PHYSADDR_MAGIC == *phys_addr )
 	{
 		_mali_osk_errcode_t ret;
-		struct page *new_page;
 		u32 linux_phys_frame_num;
 		u32 linux_phys_addr;
         AllocationList *allocItem;
-
-		/* Handle our own allocation of the physical page */
+		struct page *new_page;
 
 		allocItem = _mali_osk_malloc( sizeof(AllocationList) );
 		if ( NULL == allocItem )
@@ -415,27 +368,27 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
 			return _MALI_OSK_ERR_NOMEM;
 		}
 
-		new_page = alloc_page(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN);
-
-		if ( NULL == new_page )
 		{
-			/* Non-fatal error condition, out of memory. Upper levels may need
-			 * to be aware. */
-			_mali_osk_free( allocItem );
-			return _MALI_OSK_ERR_NOMEM;
+			new_page = alloc_page(GFP_HIGHUSER | __GFP_ZERO | __GFP_NORETRY | __GFP_NOWARN | __GFP_COLD);
+
+			if ( NULL == new_page )
+			{
+				/* Non-fatal error condition, out of memory. Upper levels will handle this. */
+				_mali_osk_free( allocItem );
+				return _MALI_OSK_ERR_NOMEM;
+			}
+
+			/* Ensure page is flushed from CPU caches. */
+			linux_phys_addr = dma_map_page(NULL, new_page, 0, PAGE_SIZE, DMA_BIDIRECTIONAL);
+
+			linux_phys_frame_num = linux_phys_addr >> PAGE_SHIFT;
 		}
 
-		flush_dcache_page(new_page);
-		wmb();
-
-		linux_phys_frame_num = page_to_pfn( new_page );
-
-		linux_phys_addr = linux_phys_frame_num << PAGE_SHIFT;
-
-		ret = ( io_remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, linux_phys_frame_num, size, vma->vm_page_prot) ) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;
+		ret = ( remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, linux_phys_frame_num, size, vma->vm_page_prot) ) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;
 
 		if ( ret != _MALI_OSK_ERR_OK)
 		{
+			dma_unmap_page(NULL, linux_phys_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 			__free_page( new_page );
 			_mali_osk_free( allocItem );
 			return ret;
@@ -458,7 +411,7 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
 	/* ASSERT that supplied phys_addr is page aligned */
 	MALI_DEBUG_ASSERT( 0 == ((*phys_addr) & ~_MALI_OSK_CPU_PAGE_MASK) );
 
-	return ( io_remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, *phys_addr >> PAGE_SHIFT, size, vma->vm_page_prot) ) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;
+	return ( remap_pfn_range( vma, ((u32)descriptor->mapping) + offset, *phys_addr >> PAGE_SHIFT, size, vma->vm_page_prot) ) ? _MALI_OSK_ERR_FAULT : _MALI_OSK_ERR_OK;
 
 }
 
@@ -493,8 +446,6 @@ void _mali_osk_mem_mapregion_unmap( mali_memory_allocation * descriptor, u32 off
          */
         while (size)
 		{
-			struct page *unmap_page;
-
             /* First find the allocation in the list of allocations */
             AllocationList *alloc = mappingInfo->list;
             AllocationList **prev = &(mappingInfo->list);
@@ -510,14 +461,16 @@ void _mali_osk_mem_mapregion_unmap( mali_memory_allocation * descriptor, u32 off
                 continue;
             }
 
-            unmap_page = pfn_to_page( alloc->physaddr >> PAGE_SHIFT );
-			MALI_DEBUG_ASSERT_POINTER( unmap_page );
-
-			__free_page( unmap_page );
+			{
+				struct page *unmap_page;
+				unmap_page = pfn_to_page( alloc->physaddr >> PAGE_SHIFT );
+				MALI_DEBUG_ASSERT_POINTER( unmap_page );
+				dma_unmap_page(NULL, alloc->physaddr, PAGE_SIZE, DMA_BIDIRECTIONAL);
+				__free_page( unmap_page );
+			}
 
             /* Remove the allocation from the list */
             *prev = alloc->next;
-
             _mali_osk_free( alloc );
 
             /* Move onto the next allocation */

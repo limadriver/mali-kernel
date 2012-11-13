@@ -27,6 +27,7 @@ typedef struct ump_dd_mem
 	void (*release_func)(void * ctx, struct ump_dd_mem * descriptor);
 	void * ctx;
 	void * backend_info;
+	int is_cached;
 } ump_dd_mem;
 
 

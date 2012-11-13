@@ -15,12 +15,18 @@
 #include "mali_kernel_subsystem.h"
 #include "mali_kernel_rendercore.h"
 #include "mali_osk_list.h"
+#if MALI_GPU_UTILIZATION
+#include "mali_kernel_utilization.h"
+#endif
+#if MALI_TIMELINE_PROFILING_ENABLED
+#include "mali_kernel_profiling.h"
+#endif
 #if USING_MMU
 #include "mali_kernel_mem_mmu.h"
-#endif
+#endif /* USING_MMU */
 #if defined USING_MALI400_L2_CACHE
 #include "mali_kernel_l2_cache.h"
-#endif
+#endif /* USING_MALI400_L2_CACHE */
 
 #define HANG_CHECK_MSECS_MIN 100
 #define HANG_CHECK_MSECS_MAX 2000 /* 2 secs */
@@ -29,6 +35,9 @@
 #define WATCHDOG_MSECS_MIN (2*HANG_CHECK_MSECS_MIN)
 #define WATCHDOG_MSECS_MAX 3600000 /* 1 hour */
 #define WATCHDOG_MSECS_DEFAULT 900000 /* 15 mins */
+
+/* max value that will be converted from jiffies to msecs and written to job->render_time_msecs */
+#define JOB_MAX_JIFFIES 100000
 
 int mali_hang_check_interval = HANG_CHECK_MSECS_DEFAULT;
 int mali_max_job_runtime = WATCHDOG_MSECS_DEFAULT;
@@ -85,9 +94,9 @@ struct mali_kernel_subsystem mali_subsystem_rendercore=
 	NULL,                                          /* session_begin */
 	NULL,                                          /* session_end */
 #if USING_MMU
-	rendercore_subsystem_broadcast_notification,   /* broadcast_notification */
+	rendercore_subsystem_broadcast_notification   /* broadcast_notification */
 #else
-	NULL,
+	NULL
 #endif
 } ;
 
@@ -133,6 +142,24 @@ static _mali_osk_errcode_t rendercore_subsystem_startup(mali_kernel_subsystem_id
 	rendercore_dummy_subsystem.name = "Rendercore Global Subsystem"; /* On the constant pool, do not free */
 	rendercore_dummy_subsystem.magic_nr = SUBSYSTEM_MAGIC_NR; /* To please the Subsystem Mutex code */
 
+#if MALI_GPU_UTILIZATION
+	if (mali_utilization_init() != _MALI_OSK_ERR_OK)
+	{
+		_mali_osk_lock_term(rendercores_global_mutex);
+		rendercores_global_mutex = NULL;
+		MALI_PRINT_ERROR(("Failed: mali_utilization_init\n")) ;
+        MALI_ERROR(_MALI_OSK_ERR_FAULT);
+	}
+#endif
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	if (_mali_profiling_init() != _MALI_OSK_ERR_OK)
+	{
+		/* No biggie if we wheren't able to initialize the profiling */
+		MALI_PRINT_ERROR(("Rendercore: Failed to initialize profiling, feature will be unavailable\n")) ;
+	}
+#endif
+
 	MALI_DEBUG_PRINT(2, ("Rendercore: subsystem global mutex initialized\n")) ;
 	MALI_SUCCESS;
 }
@@ -155,9 +182,16 @@ static void rendercore_subsystem_terminate(mali_kernel_subsystem_identifier id)
 	/* Catch double-terminate */
 	MALI_DEBUG_ASSERT_POINTER( rendercores_global_mutex );
 
+#if MALI_TIMELINE_PROFILING_ENABLED
+	_mali_profiling_term();
+#endif
+
+#if MALI_GPU_UTILIZATION
+	mali_utilization_term();
+#endif
+
 	rendercore_dummy_subsystem.name = NULL; /* The original string was on the constant pool, do not free */
 	rendercore_dummy_subsystem.magic_nr = 0;
-
 
 	/* ASSERT that no-one's holding this */
 	MALI_DEBUG_PRINT_ASSERT( 0 == rendercores_global_mutex_is_held,
@@ -167,14 +201,12 @@ static void rendercore_subsystem_terminate(mali_kernel_subsystem_identifier id)
 	rendercores_global_mutex = NULL;
 
 	MALI_DEBUG_PRINT(2, ("Rendercore: subsystem global mutex terminated\n")) ;
-
-	return;
 }
 
 
 #if USING_MMU
 /**
- * @brief Handler certain Rendercore Subsystem Broadcast Notifications
+ * @brief Handle certain Rendercore subsystem broadcast notifications
  *
  * When RENDERCORES_USE_GLOBAL_MUTEX is non-zero, this handles the following messages:
  * - MMU_KILL_STEP0_LOCK_SUBSYSTEM
@@ -183,11 +215,11 @@ static void rendercore_subsystem_terminate(mali_kernel_subsystem_identifier id)
  * The purpose is to manage the Rendercode Global Mutex, which cannot be
  * managed by any system that extends the ''rendercore''.
  *
- * All other messages must be ahndled by mali_core_subsystem_broadcast_notification()
+ * All other messages must be handled by mali_core_subsystem_broadcast_notification()
  *
  *
  * When RENDERCORES_USE_GLOBAL_MUTEX is 0, this function does nothing.
- * Instead, the subsystem that extends the ''rendercore' \b must handles its
+ * Instead, the subsystem that extends the ''rendercore' \b must handle its
  * own mutexes - refer to mali_core_subsystem_broadcast_notification().
  *
  * Used currently only for signalling when MMU has a pagefault
@@ -212,6 +244,7 @@ static void rendercore_subsystem_broadcast_notification(mali_core_notification_m
 
 		default:
 			MALI_PRINT_ERROR(("Illegal message: 0x%x, data: 0x%x\n", (u32)message, data));
+			break;
 	}
 
 }
@@ -268,7 +301,7 @@ void  mali_core_renderunit_register_read_array(mali_core_renderunit *core,
 		result_array[i] = mali_core_renderunit_register_read(core, relative_address + i*4);
 	}
 
-	MALI_DEBUG_PRINT(6, ("Core: renderunit_register_read_array: Core:%s Addr:0x%04X Nr_regs: %d\n",
+	MALI_DEBUG_PRINT(6, ("Core: renderunit_register_read_array: Core:%s Addr:0x%04X Nr_regs: %u\n",
 	        core->description,relative_address, nr_of_regs));
 }
 
@@ -308,7 +341,7 @@ void  mali_core_renderunit_register_write_array(mali_core_renderunit *core,
 {
 
 	u32 i;
-	MALI_DEBUG_PRINT(6, ("Core: renderunit_register_write_array: Core:%s Addr:0x%04X Nr_regs: %d\n",
+	MALI_DEBUG_PRINT(6, ("Core: renderunit_register_write_array: Core:%s Addr:0x%04X Nr_regs: %u\n",
 	        core->description,relative_address, nr_of_regs));
 
 	/* Do not use burst writes against the registers */
@@ -316,14 +349,12 @@ void  mali_core_renderunit_register_write_array(mali_core_renderunit *core,
 	for( i = 0; i< nr_of_regs; i++)
 	{
 		mali_core_renderunit_register_write(core, relative_address + i*4, source_array[i]);
-		MALI_DEBUG_PRINT(6, ("Writing addr: 0x%08x  val:0x%08x \n",
-		        relative_address + i*4, source_array[i]));
 	}
 }
 
 void mali_core_renderunit_timeout_function_hang_detection(void *arg)
 {
-	int action = 0;
+	mali_bool action = MALI_FALSE;
 	mali_core_renderunit * core;
 
 	core = (mali_core_renderunit *) arg;
@@ -333,7 +364,7 @@ void mali_core_renderunit_timeout_function_hang_detection(void *arg)
 	if ( !((CORE_WATCHDOG_TIMEOUT == core->state ) || (CORE_IDLE== core->state)) )
 	{
 		core->state = CORE_HANG_CHECK_TIMEOUT;
-		action = 1;
+		action = MALI_TRUE;
 	}
 
 	if(action) _mali_osk_irq_schedulework(core->irq);
@@ -343,12 +374,12 @@ void mali_core_renderunit_timeout_function_hang_detection(void *arg)
 void mali_core_renderunit_timeout_function(void *arg)
 {
 	mali_core_renderunit * core;
-	int is_watchdog;
+	mali_bool is_watchdog;
 
 	core = (mali_core_renderunit *)arg;
 	if( !core ) return;
 
-	is_watchdog = 1;
+	is_watchdog = MALI_TRUE;
 	if (mali_benchmark)
 	{
 		/* poll based core */
@@ -359,7 +390,7 @@ void mali_core_renderunit_timeout_function(void *arg)
 		   )
 		{
 			core->state = CORE_POLL;
-			is_watchdog = 0;
+			is_watchdog = MALI_FALSE;
 		}
 	}
 
@@ -409,14 +440,15 @@ _mali_osk_errcode_t mali_core_renderunit_init(mali_core_renderunit * core)
 	    MALI_PRINT_ERROR(("Core: renderunit_init: Core:%s -- cannot register with PMM\n", core->description));        
         MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
-#endif
+#endif /* USING_MALI_PMM */
 
+	core->error_recovery = MALI_FALSE;
 	core->state = CORE_IDLE;
 	core->current_job = NULL;
 	core->magic_nr = CORE_MAGIC_NR;
 #if USING_MMU
 	core->mmu = NULL;
-#endif
+#endif /* USING_MMU */
 
     MALI_SUCCESS;
 }
@@ -446,12 +478,12 @@ void mali_core_renderunit_term(mali_core_renderunit * core)
 _mali_osk_errcode_t mali_core_renderunit_map_registers(mali_core_renderunit *core)
 {
 	MALI_DEBUG_PRINT(3, ("Core: renderunit_map_registers: Core:%s\n", core->description)) ;
-	if( (core->registers_base_addr == 0) ||
-	    (core->size == 0) ||
-	    (core->description == NULL)
+	if( (0 == core->registers_base_addr) ||
+	    (0 == core->size) ||
+	    (NULL == core->description)
 	  )
 	{
-		MALI_PRINT_ERROR(("Missing fields in the core structure %d %d 0x%x;\n", core->registers_base_addr, core->size, core->description));
+		MALI_PRINT_ERROR(("Missing fields in the core structure %u %u 0x%x;\n", core->registers_base_addr, core->size, core->description));
         MALI_ERROR(_MALI_OSK_ERR_INVALID_ARGS);
 	}
 
@@ -591,10 +623,10 @@ _mali_osk_errcode_t mali_core_subsystem_register_renderunit(mali_core_subsystem*
 	_mali_osk_errcode_t err = _MALI_OSK_ERR_FAULT;
 
 	/* If any of these are 0 there is an error */
-	if(core->subsystem == 0 ||
-			 core->registers_base_addr == 0 ||
-			 core->size == 0 ||
-	   core->description == 0)
+	if(0 == core->subsystem ||
+	   0 == core->registers_base_addr ||
+	   0 == core->size ||
+	   0 == core->description)
 	{
 		MALI_PRINT_ERROR(("Missing fields in the core structure 0x%x 0x%x 0x%x;\n",
 		        core->registers_base_addr, core->size, core->description));
@@ -617,6 +649,9 @@ _mali_osk_errcode_t mali_core_subsystem_register_renderunit(mali_core_subsystem*
         );
 
 	MALI_CORE_SUBSYSTEM_MUTEX_GRAB(subsys);
+
+	/* Update which core number this is */
+	core->core_number = subsys->number_of_cores;
 
 	/* Update the array of cores in the subsystem. */
 	previous_nr   = subsys->number_of_cores;
@@ -676,6 +711,7 @@ exit_function:
 /**
  * Called by the core when a system info update is needed
  * We fill in info about all the core types available
+ * @param subsys Pointer to the core's @a mali_core_subsystem data structure
  * @param info Pointer to system info struct to update
  * @return _MALI_OSK_ERR_OK on success, or another _mali_osk_errcode_t error code on failure
  */
@@ -704,11 +740,18 @@ _mali_osk_errcode_t mali_core_subsystem_system_info_fill(mali_core_subsystem* su
 	MALI_CORE_SUBSYSTEM_MUTEX_GRAB(subsys);
 	for(i=0 ; i < subsys->number_of_cores ; ++i)
 	{
-		err = _MALI_OSK_ERR_NOMEM;
 		core = mali_core_renderunit_get_mali_core_nr(subsys,i);
-		if ( NULL==core ) goto early_exit;
+		if ( NULL==core )
+		{
+			err = _MALI_OSK_ERR_FAULT;
+			goto early_exit;
+		}
 		cinfo = (_mali_core_info *)_mali_osk_calloc(1, sizeof(_mali_core_info));
-		if ( NULL==cinfo ) goto early_exit;
+		if ( NULL==cinfo )
+		{
+			err = _MALI_OSK_ERR_NOMEM;
+			goto early_exit;
+		}
 		cinfo->version = core->core_version;
 		cinfo->type =subsys->core_type;
 		cinfo->reg_address = core->registers_base_addr;
@@ -718,7 +761,6 @@ _mali_osk_errcode_t mali_core_subsystem_system_info_fill(mali_core_subsystem* su
 		*core_info_nextp = cinfo;
 		/* Setting the next_ptr to point to &this->next_ptr */
 		core_info_nextp = &(cinfo->next);
-		err = _MALI_OSK_ERR_OK;
 	}
 early_exit:
 	if ( _MALI_OSK_ERR_OK != err) MALI_PRINT_ERROR(("Error: In mali_core_subsystem_system_info_fill %d\n", err));
@@ -726,7 +768,7 @@ early_exit:
 		cinfo = info->core_info;
 
 		MALI_DEBUG_PRINT(3, ("Current list of cores\n"));
-		while(cinfo)
+		while( NULL != cinfo )
 		{
 			MALI_DEBUG_PRINT(3, ("Type:     0x%x\n", cinfo->type));
 			MALI_DEBUG_PRINT(3, ("Version:  0x%x\n", cinfo->version));
@@ -765,18 +807,18 @@ void mali_core_subsystem_cleanup(mali_core_subsystem* subsys)
 			}
 #endif
 
-        MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsys);
+		MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsys);
 
 		mali_core_renderunit_irq_handler_remove(core);
 
 		/* When a process terminates, all cores running jobs from that process is reset and put to idle.
-			That means that when the module is unloading (this code) we are guarrantied that all cores are idle.
-			However: if something (we cant think of) is really wrong, a core may give an interrupt during this
+			That means that when the module is unloading (this code) we are guaranteed that all cores are idle.
+			However: if something (we can't think of) is really wrong, a core may give an interrupt during this
 			unloading, and we may now in the code have a bottom-half-processing pending from the interrupts
-			we derigestered above. To be sure that the bottom halves do not access the structures after they
+			we deregistered above. To be sure that the bottom halves do not access the structures after they
 			are deallocated we flush the bottom-halves processing here, before the deallocation. */
 
-        MALI_CORE_SUBSYSTEM_MUTEX_GRAB(subsys);
+		MALI_CORE_SUBSYSTEM_MUTEX_GRAB(subsys);
 
 #if USING_MALI_PMM
 			/* Only reset when we are using PMM and the core is not off */
@@ -789,9 +831,9 @@ void mali_core_subsystem_cleanup(mali_core_subsystem* subsys)
 				core->state = CORE_IDLE;
 #endif
 			if( core->state != CORE_OFF )
-		{
+			{
 				subsys->reset_core( core, MALI_CORE_RESET_STYLE_DISABLE );
-		}
+			}
 #else
 			/* Always reset the core */
 			subsys->reset_core( core, MALI_CORE_RESET_STYLE_DISABLE );
@@ -801,7 +843,7 @@ void mali_core_subsystem_cleanup(mali_core_subsystem* subsys)
 
 		_mali_osk_list_delinit(&core->list);
 
-        mali_core_renderunit_term(core);
+		mali_core_renderunit_term(core);
 
 		subsys->renderunit_delete(core);
 	}
@@ -816,9 +858,12 @@ _mali_osk_errcode_t mali_core_subsystem_ioctl_number_of_cores_get(mali_core_sess
 	mali_core_subsystem * subsystem;
 
 	subsystem = session->subsystem;
-	*number_of_cores = subsystem->number_of_cores;
+	if ( NULL != number_of_cores )
+	{
+		*number_of_cores = subsystem->number_of_cores;
+	}
 
-	MALI_DEBUG_PRINT(4, ("Core: ioctl_number_of_cores_get: %s: %d\n", subsystem->name, *number_of_cores) ) ;
+	MALI_DEBUG_PRINT(4, ("Core: ioctl_number_of_cores_get: %s: %u\n", subsystem->name, *number_of_cores) ) ;
 
     MALI_SUCCESS;
 }
@@ -852,20 +897,20 @@ _mali_osk_errcode_t mali_core_subsystem_ioctl_core_version_get(mali_core_session
 
 	core0 = mali_core_renderunit_get_mali_core_nr(subsystem, 0);
 
-	if(core0 == NULL)
+	if( NULL == core0 )
 	{
 		MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsystem);
-        MALI_ERROR(_MALI_OSK_ERR_FAULT);
+		MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
 
 	nr_return = core0->core_version;
 	MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsystem);
 
-	MALI_DEBUG_PRINT(4, ("Core: ioctl_core_version_get: %s: %d\n", subsystem->name, nr_return )) ;
+	MALI_DEBUG_PRINT(4, ("Core: ioctl_core_version_get: %s: %u\n", subsystem->name, nr_return )) ;
 
-    *version = nr_return;
+	*version = nr_return;
 
-    MALI_SUCCESS;
+	MALI_SUCCESS;
 }
 
 void mali_core_subsystem_ioctl_abort_job(mali_core_session * session, u32 id)
@@ -873,10 +918,10 @@ void mali_core_subsystem_ioctl_abort_job(mali_core_session * session, u32 id)
 	find_and_abort(session, id);
 }
 
-static int job_should_be_aborted(mali_core_job *job, u32 abort_id)
+static mali_bool job_should_be_aborted(mali_core_job *job, u32 abort_id)
 {
-	if ( job->abort_id == abort_id ) return 1;
-	else return 0;
+	if ( job->abort_id == abort_id ) return MALI_TRUE;
+	else return MALI_FALSE;
 }
 
 static void find_and_abort(mali_core_session* session, u32 abort_id)
@@ -893,9 +938,7 @@ static void find_and_abort(mali_core_session* session, u32 abort_id)
 	job = session->job_waiting_to_run;
 	if ( (job!=NULL) && job_should_be_aborted (job, abort_id) )
 	{
-		mali_core_job *job;
-		MALI_DEBUG_PRINT(3, ("Core: Aborting %s job, with id nr: %d, from the waiting_to_run slot.\n", subsystem->name, abort_id ));
-		job = session->job_waiting_to_run;
+		MALI_DEBUG_PRINT(3, ("Core: Aborting %s job, with id nr: %u, from the waiting_to_run slot.\n", subsystem->name, abort_id ));
 		session->job_waiting_to_run = NULL;
 		_mali_osk_list_delinit(&(session->awaiting_sessions_list));
 		subsystem->awaiting_sessions_sum_all_priorities--;
@@ -907,10 +950,10 @@ static void find_and_abort(mali_core_session* session, u32 abort_id)
 		job = core->current_job;
 		if ( (job!=NULL) && (job_should_be_aborted (job, abort_id) ) )
 		{
-			MALI_DEBUG_PRINT(3, ("Core: Aborting %s job, with id nr: %d, which is currently running on mali.\n", subsystem->name, abort_id ));
+			MALI_DEBUG_PRINT(3, ("Core: Aborting %s job, with id nr: %u, which is currently running on mali.\n", subsystem->name, abort_id ));
 			if ( core->state==CORE_IDLE )
 			{
-				MALI_PRINT_ERROR(("Aborting core with running job which is idle. Must be something wery wrong."));
+				MALI_PRINT_ERROR(("Aborting core with running job which is idle. Must be something very wrong."));
 				goto end_bug;
 			}
 			mali_core_renderunit_detach_job_from_core(core, SUBSYSTEM_RESCHEDULE, JOB_STATUS_END_ABORT);
@@ -970,7 +1013,7 @@ static void mali_core_subsystem_cleanup_all_renderunits(mali_core_subsystem* sub
 		_MALI_OSK_INIT_LIST_HEAD(&(subsys->renderunit_off_head)) ;
 	}
 
-	for(i=0; i<PRIORITY_LEVELS; i++)
+	for(i=0; i<PRIORITY_LEVELS; ++i)
 	{
 		if ( ! _mali_osk_list_empty(&(subsys->awaiting_sessions_head[i])))
 		{
@@ -1028,7 +1071,7 @@ static void mali_core_subsystem_move_core_set_idle(mali_core_renderunit *core)
 		_mali_osk_list_move( &core->list, &subsystem->renderunit_idle_head );
 	}
 
-	if( oldstatus != CORE_OFF )
+	if( CORE_OFF != oldstatus )
 	{
 		/* Message that this core is now idle or in fact off */
 		_mali_uk_pmm_message_s event = {
@@ -1037,17 +1080,14 @@ static void mali_core_subsystem_move_core_set_idle(mali_core_renderunit *core)
 			0 };
 		event.data = core->pmm_id;
 		_mali_ukk_pmm_event_message( &event );
+#if USING_MMU
+		/* Only free the reference when entering idle state from
+		 * anything other than power off
+		 */
+		mali_memory_core_mmu_release_address_space_reference(core->mmu);
+#endif /* USING_MMU */
 	}
 
-#if USING_MMU
-		if( oldstatus != CORE_OFF )
-		{
-			/* Only free the reference when entering idle state from
-			 * anything other than power off
-			 */
-			mali_memory_core_mmu_release_address_space_reference(core->mmu);
-		}
-#endif
 
 #else /* !USING_MALI_PMM */
 
@@ -1188,6 +1228,11 @@ static void mali_core_job_start_on_core(mali_core_job *job, mali_core_renderunit
 
 	/* Tries to start job on the core. Returns MALI_FALSE if the job could not be started */
 	err = subsystem->start_job(job, core);
+
+#if MALI_GPU_UTILIZATION
+	mali_utilization_core_start();
+#endif
+
 	if ( _MALI_OSK_ERR_OK != err )
 	{
 		/* This will happen only if there is something in the job object
@@ -1231,9 +1276,6 @@ static void mali_core_subsystem_schedule(mali_core_subsystem * subsystem)
 	mali_core_renderunit *core, *tmp;
 	mali_core_session *session;
 	mali_core_job *job;
-#if USING_MMU
-	int err = -1;
-#endif
 
 	MALI_DEBUG_PRINT(5, ("Core: subsystem_schedule: %s\n", subsystem->name )) ;
 
@@ -1258,7 +1300,7 @@ static void mali_core_subsystem_schedule(mali_core_subsystem * subsystem)
 	_MALI_OSK_LIST_FOREACHENTRY(core, tmp, &subsystem->renderunit_idle_head, mali_core_renderunit, list)
 	{
 #if USING_MMU
-		err = mali_memory_core_mmu_activate_page_table(core->mmu, session->mmu_session, mali_core_subsystem_callback_schedule_wrapper, subsystem);
+		int err = mali_memory_core_mmu_activate_page_table(core->mmu, session->mmu_session, mali_core_subsystem_callback_schedule_wrapper, subsystem);
 		if (0 == err)
 		{
 			/* core points to a core where the MMU page table activation succeeded */
@@ -1414,6 +1456,7 @@ _mali_osk_errcode_t mali_core_session_add_job(mali_core_session * session, mali_
 	MALI_DEBUG_PRINT(5, ("Core: session_add_job: for %s\n", subsystem->name )) ;
 
 	/* Setting the default value; No job to return */
+	MALI_DEBUG_ASSERT_POINTER(job_return);
 	*job_return = NULL;
 
 	if ( NULL != session->job_waiting_to_run)
@@ -1455,9 +1498,9 @@ _mali_osk_errcode_t mali_core_session_add_job(mali_core_session * session, mali_
 
 static void mali_core_job_set_run_time(mali_core_job * job)
 {
-	long jiffies_used;
-	jiffies_used =	_mali_osk_time_tickcount() - (long)job->start_time_jiffies;
-	if ( jiffies_used > 100000)
+	u32 jiffies_used;
+	jiffies_used =	_mali_osk_time_tickcount() - job->start_time_jiffies;
+	if ( jiffies_used > JOB_MAX_JIFFIES )
 	{
 		MALI_PRINT_ERROR(("Job used too many jiffies: %d\n", jiffies_used ));
 		jiffies_used = 0;
@@ -1469,19 +1512,30 @@ static void mali_core_renderunit_detach_job_from_core(mali_core_renderunit* core
 {
 	mali_core_job * job;
 	mali_core_subsystem * subsystem;
-    job = core->current_job;
+	job = core->current_job;
 	subsystem = core->subsystem;
-    MALI_DEBUG_ASSERT(core->state != CORE_IDLE);
+	MALI_DEBUG_ASSERT(CORE_IDLE != core->state);
 
 	if ( NULL != job )
 	{
 		mali_core_job_set_run_time(job);
 		core->current_job = NULL;
 	}
-	subsystem->reset_core( core, MALI_CORE_RESET_STYLE_RUNABLE );
+
+	if (JOB_STATUS_END_SEG_FAULT == end_status)
+	{
+		subsystem->reset_core( core, MALI_CORE_RESET_STYLE_HARD );
+	}
+	else
+	{
+		subsystem->reset_core( core, MALI_CORE_RESET_STYLE_RUNABLE );
+	}
 
 	if ( CORE_IDLE != core->state )
 	{
+#if MALI_GPU_UTILIZATION
+		mali_utilization_core_end();
+#endif
 		mali_core_subsystem_move_core_set_idle(core);
 	}
 
@@ -1509,7 +1563,11 @@ static void lock_subsystem(struct mali_core_subsystem * subsys)
 
 /* You must run lock_subsystem() before entering this function, to ensure that
    the subsystem mutex is held.
-   Later, unlock_subsystem() can be called to release the mutex. */
+   Later, unlock_subsystem() can be called to release the mutex.
+
+   This function only stops cores behind the given MMU, unless "mmu" is NULL, in
+   which case all cores are stopped.
+*/
 static void stop_bus_for_all_cores_on_mmu(struct mali_core_subsystem * subsys, void* mmu)
 {
 	u32 i;
@@ -1521,13 +1579,14 @@ static void stop_bus_for_all_cores_on_mmu(struct mali_core_subsystem * subsys, v
 		mali_core_renderunit * core;
 		core = mali_core_renderunit_get_mali_core_nr(subsys,i);
 
-		/* We stop only cores behind the given MMU */
+		/* We stop only cores behind the given MMU, unless MMU is NULL */
 		if ( (NULL!=mmu) && (core->mmu != mmu) ) continue;
 
 		if ( CORE_IDLE != core->state )
 		{
 			MALI_DEBUG_PRINT(4, ("Stopping bus on core %s\n", core->description));
 			mali_core_renderunit_stop_bus(core);
+			core->error_recovery = MALI_TRUE;
 		}
 		else
 		{
@@ -1540,7 +1599,11 @@ static void stop_bus_for_all_cores_on_mmu(struct mali_core_subsystem * subsys, v
 
 /* You must run lock_subsystem() before entering this function, to ensure that
    the subsystem mutex is held.
-   Later, unlock_subsystem() can be called to release the mutex. */
+   Later, unlock_subsystem() can be called to release the mutex.
+
+   This function only resets cores behind the given MMU, unless "mmu" is NULL, in
+   which case all cores are reset.
+*/
 static void reset_all_cores_on_mmu(struct mali_core_subsystem * subsys, void* mmu)
 {
 	u32 i;
@@ -1552,7 +1615,7 @@ static void reset_all_cores_on_mmu(struct mali_core_subsystem * subsys, void* mm
 		mali_core_renderunit * core;
 		core = mali_core_renderunit_get_mali_core_nr(subsys,i);
 
-		/* We stop only cores behind the given MMU */
+		/* We reset only cores behind the given MMU, unless MMU is NULL */
 		if ( (NULL!=mmu) && (core->mmu != mmu) ) continue;
 
 		if ( CORE_IDLE != core->state )
@@ -1574,15 +1637,23 @@ static void reset_all_cores_on_mmu(struct mali_core_subsystem * subsys, void* mm
    Later, unlock_subsystem() can be called to release the mutex. */
 static void continue_job_handling(struct mali_core_subsystem * subsys)
 {
-	int i, j;
+	u32 i, j;
 
 	MALI_DEBUG_PRINT(3, ("Handling: Continue: %s\n", subsys->name ));
 	MALI_ASSERT_MUTEX_IS_GRABBED(subsys);
 
+
+	for(i=0 ; i < subsys->number_of_cores ; ++i)
+	{
+		mali_core_renderunit * core;
+		core = mali_core_renderunit_get_mali_core_nr(subsys,i);
+		core->error_recovery = MALI_FALSE;
+	}
+
 	i = subsys->number_of_cores;
 	j = subsys->awaiting_sessions_sum_all_priorities;
-
-	/* Schedule MAX(nr_waiting_jobs , number of cores) times */
+	
+	/* Schedule MIN(nr_waiting_jobs , number of cores) times */
 	while( i-- && j--)
 	{
 		mali_core_subsystem_schedule(subsys);
@@ -1621,6 +1692,7 @@ void mali_core_subsystem_broadcast_notification(struct mali_core_subsystem * sub
 
 		default:
 			MALI_PRINT_ERROR(("Illegal message: 0x%x, data: 0x%x\n", (u32)message, data));
+			break;
 	}
 }
 #endif /* USING_MMU */
@@ -1646,7 +1718,7 @@ u32 mali_core_hang_check_timeout_get(void)
 static _mali_osk_errcode_t  mali_core_irq_handler_upper_half (void * data)
 {
 	mali_core_renderunit *core;
-	int has_pending_irq;
+	u32 has_pending_irq;
 
     core  = (mali_core_renderunit * )data;
 
@@ -1686,7 +1758,7 @@ static void mali_core_irq_handler_bottom_half ( void *data )
 	MALI_CHECK_SUBSYSTEM(subsystem);
 
 	MALI_CORE_SUBSYSTEM_MUTEX_GRAB( subsystem );
-	if ( core->state== CORE_IDLE ) goto end_function;
+	if ( CORE_IDLE == core->state ) goto end_function;
 
 	MALI_DEBUG_PRINT(5, ("IRQ: handling irq from core %s\n", core->description )) ;
 
@@ -1696,24 +1768,29 @@ static void mali_core_irq_handler_bottom_half ( void *data )
 	job_status = subsystem->irq_handler_bottom_half( core );
 
 	/* Retval is nonzero if the job is finished. */
-	if ( job_status != JOB_STATUS_CONTINUE_RUN )
+	if ( JOB_STATUS_CONTINUE_RUN != job_status )
 	{
 		mali_core_renderunit_detach_job_from_core(core, SUBSYSTEM_RESCHEDULE, job_status);
 	}
 	else
 	{
-		if ( CORE_WATCHDOG_TIMEOUT == core->state )
+		switch ( core->state )
 		{
-			MALI_DEBUG_PRINT(2, ("Watchdog SW Timeout of job from core: %s\n", core->description ));
-			mali_core_renderunit_detach_job_from_core(core, SUBSYSTEM_RESCHEDULE, JOB_STATUS_END_TIMEOUT_SW );
+			case CORE_WATCHDOG_TIMEOUT:
+				MALI_DEBUG_PRINT(2, ("Watchdog SW Timeout of job from core: %s\n", core->description ));
+				mali_core_renderunit_detach_job_from_core(core, SUBSYSTEM_RESCHEDULE, JOB_STATUS_END_TIMEOUT_SW );
+				break;
+
+			case CORE_POLL:
+				MALI_DEBUG_PRINT(5, ("Poll core: %s\n", core->description )) ;
+				core->state = CORE_WORKING;
+				_mali_osk_timer_add( core->timer, 1);
+				break;
+
+			default:
+				MALI_DEBUG_PRINT(4, ("IRQ: The job on the core continue to run: %s\n", core->description )) ;
+				break;
 		}
-		else if ( CORE_POLL == core->state )
-		{
-			MALI_DEBUG_PRINT(5, ("Poll core: %s\n", core->description )) ;
-			core->state = CORE_WORKING;
-			_mali_osk_timer_add( core->timer, 1);
-		}
-		else MALI_DEBUG_PRINT(4, ("IRQ: The job on the core continue to run: %s\n", core->description )) ;
 	}
 end_function:
 	MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsystem);
@@ -1743,26 +1820,26 @@ _mali_osk_errcode_t mali_core_subsystem_signal_power_down(mali_core_subsystem *s
 	 * caller cope with the core get failure and check that the core has 
 	 * been unregistered in the PMM as part of its destruction.
 	 */
-	if( subsys->number_of_cores > mali_core_nr )
+	if ( subsys->number_of_cores > mali_core_nr )
 	{
 		core = mali_core_renderunit_get_mali_core_nr(subsys, mali_core_nr);
 	}
 
-	if( core == NULL )
+	if ( NULL == core )
 	{
 		/* Couldn't find the core */
 		MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsys);
 		MALI_DEBUG_PRINT( 5, ("Core: Failed to find core to power down\n") );
         MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
-	else if( core->state != CORE_IDLE )
+	else if ( core->state != CORE_IDLE )
 	{
 		/* When powering down we either set a pending power down flag here so we
 		 * can power down cleanly after the job completes or we don't set the 
 		 * flag if we have been asked to only do a power down right now
 		 * In either case, return that the core is busy
 		 */
-		if( !immediate_only ) core->pend_power_down = MALI_TRUE;
+		if ( !immediate_only ) core->pend_power_down = MALI_TRUE;
 		MALI_CORE_SUBSYSTEM_MUTEX_RELEASE(subsys);
 		MALI_DEBUG_PRINT( 5, ("Core: No idle core to power down\n") );
         MALI_ERROR(_MALI_OSK_ERR_BUSY);
@@ -1816,9 +1893,17 @@ _mali_osk_errcode_t mali_core_subsystem_signal_power_up(mali_core_subsystem *sub
 #if USING_MMU
 		if ( NULL!=core->mmu )
 		{
-			mali_kernel_mmu_reset(core->mmu);
-		}
+#if defined(USING_MALI200)
+			if (core->pmm_id != MALI_PMM_CORE_PP0)
+			{
 #endif
+				mali_kernel_mmu_reset(core->mmu);
+#if defined(USING_MALI200)
+			}
+#endif
+
+		}
+#endif /* USING_MMU */
 		subsys->reset_core( core, MALI_CORE_RESET_STYLE_RUNABLE );
 	}
 

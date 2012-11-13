@@ -13,9 +13,11 @@ FILES_PREFIX=
 
 ifneq ($(KBUILD_EXTMOD),)
 DRIVER_DIR=$(KBUILD_EXTMOD)
+MALI_RELEASE_NAME=$(shell cat $(KBUILD_EXTMOD)/.version 2> /dev/null)
 include $(KBUILD_EXTMOD)/Makefile.common
 else
 DRIVER_DIR=.
+MALI_RELEASE_NAME=$(shell cat .version 2> /dev/null)
 include ./Makefile.common
 endif
 
@@ -26,6 +28,12 @@ USING_UMP ?= 0
 ONLY_ZBT ?= 0
 USING_ZBT ?= 1
 USING_OS_MEMORY ?= 0
+USING_PMM ?= 0
+USING_GPU_UTILIZATION ?= 0
+USING_MALI_RUN_TIME_PM ?= 0
+USING_MALI_PMM_TESTSUITE ?= 0
+USING_PROFILING ?= 0
+TIMESTAMP ?= default
 BUILD ?= debug
 
 ifeq ($(USING_UMP),1)
@@ -50,9 +58,21 @@ DEFINES += -DUSING_MMU=$(USING_MMU)
 DEFINES += -DUSING_UMP=$(USING_UMP)
 DEFINES += -DONLY_ZBT=$(ONLY_ZBT)
 DEFINES += -D_MALI_OSK_SPECIFIC_INDIRECT_MMAP
+DEFINES += -DMALI_TIMELINE_PROFILING_ENABLED=$(USING_PROFILING)
+DEFINES += -DMALI_POWER_MGMT_TEST_SUITE=$(USING_MALI_PMM_TESTSUITE)
+DEFINES += -DMALI_PMM_RUNTIME_JOB_CONTROL_ON=$(USING_MALI_RUN_TIME_PM)
 
-# hard-coded to disabled for now
-DEFINES += -DUSING_MALI_PMM=0
+ifneq ($(call submodule_enabled, $M, PMU),0)
+        MALI_PLATFORM_FILE = platform/mali400-pmu/mali_platform.c
+endif
+
+ifeq ($(USING_MALI_RUN_TIME_PM),1)
+	MALI_PLATFORM_FILE = platform/mali-runtimepm/mali_platform.c
+endif
+
+
+DEFINES += -DUSING_MALI_PMM=$(USING_PMM)
+DEFINES += -DMALI_GPU_UTILIZATION=$(USING_GPU_UTILIZATION)
 
 ifeq ($(BUILD), debug)
 DEFINES += -DDEBUG
@@ -82,6 +102,7 @@ EXTRA_CFLAGS += -I$(KBUILD_EXTMOD)/linux/license/proprietary
 else
 EXTRA_CFLAGS += -I$(KBUILD_EXTMOD)/linux/license/gpl
 endif
+EXTRA_CFLAGS += -I$(KBUILD_EXTMOD)/common/pmm
 
 # Source files which always are included in a build
 SRC = \
@@ -94,8 +115,32 @@ SRC = \
 	$(OSKFILES) \
 	$(UKKFILES) \
 	__malidrv_build_info.c
+	
+ifeq ($(USING_PROFILING),1)
+SRC += \
+	common/mali_kernel_profiling.c \
+	timestamp-$(TIMESTAMP)/mali_timestamp.c
+EXTRA_CFLAGS += -I$(KBUILD_EXTMOD)/timestamp-$(TIMESTAMP)
+endif
 
 # Selecting files to compile by parsing the config file
+
+ifeq ($(USING_PMM),1)
+SRC += \
+	common/pmm/mali_pmm.c \
+	common/pmm/mali_pmm_policy.c \
+	common/pmm/mali_pmm_policy_alwayson.c \
+	common/pmm/mali_pmm_policy_jobcontrol.c \
+	common/pmm/mali_pmm_state.c \
+	linux/mali_kernel_pm.c \
+	linux/mali_osk_pm.c \
+	linux/mali_device_pause_resume.c 
+endif
+
+ifeq ($(USING_GPU_UTILIZATION),1)
+SRC += \
+	common/mali_kernel_utilization.c
+endif
 
 ifneq ($(call submodule_enabled, $M, MALI400PP),0)
 	# Mali-400 PP in use
@@ -104,6 +149,17 @@ ifneq ($(call submodule_enabled, $M, MALI400PP),0)
 endif
 
 ifneq ($(call submodule_enabled, $M, MALI400GP),0)
+	# Mali-400 GP in use
+	SRC += common/mali_kernel_GP2.c
+endif
+
+ifneq ($(call submodule_enabled, $M, MALI300PP),0)
+	# Mali-400 PP in use
+	EXTRA_CFLAGS += -DUSING_MALI400
+	SRC += common/mali_kernel_MALI200.c
+endif
+
+ifneq ($(call submodule_enabled, $M, MALI300GP),0)
 	# Mali-400 GP in use
 	SRC += common/mali_kernel_GP2.c
 endif
@@ -127,7 +183,13 @@ else
 	SRC += common/mali_kernel_mem_buddy.c
 endif
 
-ifneq ($(call submodule_enabled, $M, MALI400L2),0)
+ifneq ($(call submodule_enabled, $M, MALI400L2)$(),0)
+	# Mali Level2 cache in use
+	EXTRA_CFLAGS += -DUSING_MALI400_L2_CACHE
+	SRC += common/mali_kernel_l2_cache.c
+endif
+
+ifneq ($(call submodule_enabled, $M, MALI300L2)$(),0)
 	# Mali Level2 cache in use
 	EXTRA_CFLAGS += -DUSING_MALI400_L2_CACHE
 	SRC += common/mali_kernel_l2_cache.c
@@ -246,6 +308,7 @@ VERSION_STRINGS += BUILD=$(shell echo $(BUILD) | tr a-z A-Z)
 VERSION_STRINGS += CPU=$(CPU)
 VERSION_STRINGS += USING_MMU=$(USING_MMU)
 VERSION_STRINGS += USING_UMP=$(USING_UMP)
+VERSION_STRINGS += USING_PMM=$(USING_PMM)
 VERSION_STRINGS += USING_MALI200=$(call submodule_enabled, ., MALI200)
 VERSION_STRINGS += USING_MALI400=$(call submodule_enabled, ., MALI400)
 VERSION_STRINGS += USING_MALI400_L2_CACHE=$(call submodule_enabled, ., MALI400L2)
@@ -255,7 +318,7 @@ VERSION_STRINGS += KDIR=$(KDIR)
 all: make-build-info-file $(UMP_SYMVERS_FILE)
 	$(MAKE) ARCH=$(ARCH) -C $(KDIR) M=$(CURDIR) modules
 	@([ "$(PATCH)" != "" ] && [ -f arch/$(PATCH_BACKUP_FILE) ] && mv -f arch/$(PATCH_BACKUP_FILE) arch/config.h  && echo "Patch backup restored") || echo No Unpatching needed
-	@rm $(FILES_PREFIX)__malidrv_build_info.{o,c}
+	@rm $(FILES_PREFIX)__malidrv_build_info.c $(FILES_PREFIX)__malidrv_build_info.o
 
 clean:
 	$(MAKE) ARCH=$(ARCH) -C $(KDIR) M=$(CURDIR) clean

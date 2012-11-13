@@ -15,6 +15,9 @@
 #include "mali_kernel_core.h"
 #include "regs/mali_200_regs.h"
 #include "mali_kernel_rendercore.h"
+#if MALI_TIMELINE_PROFILING_ENABLED
+#include "mali_kernel_profiling.h"
+#endif
 #ifdef USING_MALI400_L2_CACHE
 #include "mali_kernel_l2_cache.h"
 #endif
@@ -67,6 +70,11 @@ typedef struct mali200_job
 	u32 perf_counter_l2_val0_raw;
 	u32 perf_counter_l2_val1_raw;
 #endif
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	u32 pid;
+	u32 tid;
+#endif
 } mali200_job;
 
 
@@ -89,6 +97,7 @@ static void mali200_subsystem_broadcast_notification(mali_core_notification_mess
 /* Internal support functions  */
 static _mali_osk_errcode_t mali200_core_version_legal( mali_core_renderunit *core );
 static void mali200_reset(mali_core_renderunit *core);
+static void mali200_reset_hard(struct mali_core_renderunit * core);
 static void mali200_raw_reset(mali_core_renderunit * core);
 static void mali200_initialize_registers_mgmt(mali_core_renderunit *core );
 
@@ -338,7 +347,7 @@ static _mali_osk_errcode_t mali200_renderunit_create(_mali_osk_resource_t * reso
 #if defined(USING_MALI200)
 		core->core_version = (((u32)MALI_PP_PRODUCT_ID) << 16) | 5 /* Fake Mali200-r0p5 */;
 #elif defined(USING_MALI400)
-		core->core_version = (((u32)MALI_PP_PRODUCT_ID) << 16) | 1 /* Fake Mali400-r0p1 */;
+		core->core_version = (((u32)MALI_PP_PRODUCT_ID) << 16) | 0x0101 /* Fake Mali400-r1p1 */;
 #else
 #error "No supported mali core defined"
 #endif
@@ -393,7 +402,12 @@ static _mali_osk_errcode_t mali200_core_version_legal( mali_core_renderunit *cor
 	u32 mali_type;
 
 	mali_type = core->core_version >> 16;
+#if defined(USING_MALI400)
+	/* Mali300 and Mali400 is compatible, accept either core. */
+	if (MALI400_PP_PRODUCT_ID != mali_type && MALI300_PP_PRODUCT_ID != mali_type)
+#else
 	if (MALI_PP_PRODUCT_ID != mali_type)
+#endif
 	{
 		MALI_PRINT_ERROR(("Error: reading this from " MALI_PP_SUBSYSTEM_NAME " version register: 0x%x\n", core->core_version));
         MALI_ERROR(_MALI_OSK_ERR_FAULT);
@@ -411,18 +425,14 @@ static void mali200_raw_reset( mali_core_renderunit *core )
 {
 	int i;
 	const int request_loop_count = 20;
-	const int reset_finished_loop_count = 15;
-	const u32 reset_wait_target_register = MALI200_REG_ADDR_MGMT_WRITE_BOUNDARY_LOW;
-	const u32 reset_invalid_value = 0xC0FFE000;
-	const u32 reset_check_value = 0xC01A0000;
-	const u32 reset_default_value = 0;
 
 	MALI_DEBUG_PRINT(4, ("Mali PP: mali200_raw_reset: %s\n", core->description));
 	if (mali_benchmark) return;
 
+	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_MASK, 0); /* disable IRQs */
+
 #if defined(USING_MALI200)
 
-	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_MASK, 0); /* disable IRQs */
     mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_CTRL_MGMT, MALI200_REG_VAL_CTRL_MGMT_STOP_BUS);
 
 	for (i = 0; i < request_loop_count; i++)
@@ -433,49 +443,30 @@ static void mali200_raw_reset( mali_core_renderunit *core )
 
 	MALI_DEBUG_PRINT_IF(1, request_loop_count == i, ("Mali PP: Bus was never stopped during core reset\n"));
 
-#if USING_MMU
 
-	if ( (request_loop_count==i) && (NULL!=core->mmu) )
+	if (request_loop_count==i)
 	{
-		/* Could not stop bus connections from core, probably because some of the already pending
-		bus request has had a page fault, and therefore can not complete before the MMU does PageFault
-		handling. This can be treated as a heavier reset function - which unfortunately reset all
-		the cores on this MMU in addition to the MMU itself */
-		MALI_DEBUG_PRINT(1, ("Mali PP: Forcing Bus reset\n"));
-		mali_kernel_mmu_force_bus_reset(core->mmu);
+#if USING_MMU
+		if ((NULL!=core->mmu) && (MALI_FALSE == core->error_recovery))
+		{
+			/* Could not stop bus connections from core, probably because some of the already pending
+			   bus request has had a page fault, and therefore can not complete before the MMU does PageFault
+			   handling. This can be treated as a heavier reset function - which unfortunately reset all
+			   the cores on this MMU in addition to the MMU itself */
+			MALI_DEBUG_PRINT(1, ("Mali PP: Forcing Bus reset\n"));
+			mali_kernel_mmu_force_bus_reset(core->mmu);
+			return;
+		}
+#endif
+		MALI_PRINT(("A MMU reset did not allow PP  to stop its bus, system failure, unable to recover\n"));
 		return;
 	}
-#endif
 
-
-	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_invalid_value);
-
-	mali_core_renderunit_register_write(
-			core,
-			MALI200_REG_ADDR_MGMT_CTRL_MGMT,
-			MALI200_REG_VAL_CTRL_MGMT_FORCE_RESET);
-
-	for (i = 0; i < reset_finished_loop_count; i++)
-	{
-		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_check_value);
-		if (reset_check_value == mali_core_renderunit_register_read(core, reset_wait_target_register))
-		{
-			MALI_DEBUG_PRINT(3, ("Reset loop exiting after %d iterations\n", i));
-			break;
-		}
-	}
-
-	if (i == reset_finished_loop_count)
-	{
-		MALI_DEBUG_PRINT(1, ("The reset loop didn't work\n"));
-	}
-
-	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_default_value); /* set it back to the default */
-	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_CLEAR, MALI200_REG_VAL_IRQ_MASK_ALL);
+	/* use the hard reset routine to do the actual reset */
+	mali200_reset_hard(core);
 
 #elif defined(USING_MALI400)
 
-	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_MASK, 0); /* disable IRQs */
 	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_CLEAR, MALI400PP_REG_VAL_IRQ_RESET_COMPLETED);
 	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_CTRL_MGMT, MALI400PP_REG_VAL_CTRL_MGMT_SOFT_RESET);
 
@@ -485,46 +476,25 @@ static void mali200_raw_reset( mali_core_renderunit *core )
 		_mali_osk_time_ubusydelay(10);
 	}
 
-#if USING_MMU
-
-	if ( (request_loop_count==i) && (NULL!=core->mmu) )
+	if (request_loop_count==i)
 	{
-		/* Could not stop bus connections from core, probably because some of the already pending
-		bus request has had a page fault, and therefore can not complete before the MMU does PageFault
-		handling. This can be treated as a heavier reset function - which unfortunately reset all
-		the cores on this MMU in addition to the MMU itself */
-		MALI_DEBUG_PRINT(1, ("Mali PP: Forcing Bus reset\n"));
-		mali_kernel_mmu_force_bus_reset(core->mmu);
+#if USING_MMU
+		if ((NULL!=core->mmu) && (MALI_FALSE == core->error_recovery))
+		{
+			/* Could not stop bus connections from core, probably because some of the already pending
+			   bus request has had a page fault, and therefore can not complete before the MMU does PageFault
+			   handling. This can be treated as a heavier reset function - which unfortunately reset all
+			   the cores on this MMU in addition to the MMU itself */
+			MALI_DEBUG_PRINT(1, ("Mali PP: Forcing Bus reset\n"));
+			mali_kernel_mmu_force_bus_reset(core->mmu);
+			return;
+		}
+#endif
+		MALI_PRINT(("A MMU reset did not allow PP  to stop its bus, system failure, unable to recover\n"));
 		return;
 	}
-#endif
-
-	if (i == request_loop_count)
-	{
-		MALI_DEBUG_PRINT(1, ("Mali PP: Did not receive reset completed signal\n"));
-
-		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_invalid_value);
-
-		mali_core_renderunit_register_write( core, MALI200_REG_ADDR_MGMT_CTRL_MGMT, MALI200_REG_VAL_CTRL_MGMT_FORCE_RESET);
-
-		for (i = 0; i < reset_finished_loop_count; i++)
-		{
-			mali_core_renderunit_register_write(core, reset_wait_target_register, reset_check_value);
-			if (reset_check_value == mali_core_renderunit_register_read(core, reset_wait_target_register))
-			{
-				MALI_DEBUG_PRINT(5, ("Reset loop exiting after %d iterations\n", i));
-				break;
-			}
-		}
-
-		if (i == reset_finished_loop_count)
-		{
-			MALI_DEBUG_PRINT(1, ("The reset loop didn't work\n"));
-		}
-
-		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_default_value); /* set it back to the default */
+	else
 		mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_CLEAR, MALI200_REG_VAL_IRQ_MASK_ALL);
-	}
 
 #else
 #error "no supported mali core defined"
@@ -654,12 +624,17 @@ static _mali_osk_errcode_t subsystem_mali200_start_job(mali_core_job * job, mali
 	}
 
 	subsystem_flush_mapped_mem_cache();
+	_mali_osk_mem_barrier();
 
 	/* This is the command that starts the Core */
 	mali_core_renderunit_register_write(
 			core,
 			MALI200_REG_ADDR_MGMT_CTRL_MGMT,
 			MALI200_REG_VAL_CTRL_MGMT_START_RENDERING);
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_START|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), job200->pid, job200->tid, 0, 0, 0);
+#endif
 
     MALI_SUCCESS;
 }
@@ -695,6 +670,7 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	job = core->current_job;
 	job200 = GET_JOB200_PTR(job);
 
+
 	if (mali_benchmark) {
 		irq_readout = MALI200_REG_VAL_IRQ_END_OF_FRAME;
 		current_tile_addr = 0;
@@ -726,6 +702,10 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	{
 #if defined(USING_MALI200)
 		mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_CTRL_MGMT, MALI200_REG_VAL_CTRL_MGMT_FLUSH_CACHES);
+#endif
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status */
 #endif
 
 		if (0 != job200->user_input.perf_counter_flag )
@@ -779,6 +759,9 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	         ((CORE_HANG_CHECK_TIMEOUT == core->state) && (current_tile_addr == job200->last_tile_list_addr))
 	        )
 	{
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status */
+#endif
 		/* no progress detected, killed by the watchdog */
 		MALI_DEBUG_PRINT(2, ("M200: SW-Timeout Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x.\n", irq_readout ,current_tile_addr ,core_status) );
 		/* In this case will the system outside cleanup and reset the core */
@@ -789,7 +772,7 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	{
 		/* check interval in ms */
 		u32 timeout = mali_core_hang_check_timeout_get();
-		MALI_DEBUG_PRINT(1, ("M200: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
+		MALI_DEBUG_PRINT(3, ("M200: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
 		job200->last_tile_list_addr = current_tile_addr;
 		/* hw watchdog triggered, set up a progress checker every HANGCHECK ms */
 		_mali_osk_timer_add(core->timer_hang_detection, _mali_osk_time_mstoticks(timeout));
@@ -807,6 +790,10 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	}
 	else
 	{
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status */
+#endif
+
 		MALI_DEBUG_PRINT(1, ("Mali PP: Job: 0x%08x  CRASH?  Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x\n",
 				(u32)job200->user_input.user_job_ptr, irq_readout ,current_tile_addr ,core_status) ) ;
 
@@ -878,6 +865,11 @@ static _mali_osk_errcode_t subsystem_mali200_get_new_job_from_user(struct mali_c
 	job->session = session;
 	job_priority_set(job, job200->user_input.priority);
 	job_watchdog_set(job, job200->user_input.watchdog_msecs );
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	job200->pid = _mali_osk_get_pid();
+	job200->tid = _mali_osk_get_tid();
+#endif
 
 	job->abort_id = job200->user_input.abort_id;
 	if (NULL != session->job_waiting_to_run)
@@ -1040,18 +1032,62 @@ static void subsystem_mali200_renderunit_delete(mali_core_renderunit * core)
 	_mali_osk_free(core);
 }
 
+static void mali200_reset_hard(struct mali_core_renderunit * core)
+{
+	const int reset_finished_loop_count = 15;
+	const u32 reset_wait_target_register = MALI200_REG_ADDR_MGMT_WRITE_BOUNDARY_LOW;
+	const u32 reset_invalid_value = 0xC0FFE000;
+	const u32 reset_check_value = 0xC01A0000;
+	const u32 reset_default_value = 0;
+	int i;
+
+	MALI_DEBUG_PRINT(5, ("subsystem_mali200_renderunit_reset_core_hard called for core %s\n", core->description));
+
+	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_invalid_value);
+
+	mali_core_renderunit_register_write(
+			core,
+			MALI200_REG_ADDR_MGMT_CTRL_MGMT,
+			MALI200_REG_VAL_CTRL_MGMT_FORCE_RESET);
+
+	for (i = 0; i < reset_finished_loop_count; i++)
+	{
+		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_check_value);
+		if (reset_check_value == mali_core_renderunit_register_read(core, reset_wait_target_register))
+		{
+			MALI_DEBUG_PRINT(5, ("Reset loop exiting after %d iterations\n", i));
+			break;
+		}
+		_mali_osk_time_ubusydelay(10);
+	}
+
+	if (i == reset_finished_loop_count)
+	{
+		MALI_DEBUG_PRINT(1, ("The reset loop didn't work\n"));
+	}
+
+	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_default_value); /* set it back to the default */
+	mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_CLEAR, MALI200_REG_VAL_IRQ_MASK_ALL);
+}
+
 static void subsystem_mali200_renderunit_reset_core(struct mali_core_renderunit * core, mali_core_reset_style style)
 {
 	MALI_DEBUG_PRINT(5, ("Mali PP: renderunit_reset_core\n"));
-	if (MALI_CORE_RESET_STYLE_RUNABLE == style)
+
+	switch (style)
 	{
-		/* normal internal reset */
-		mali200_reset(core);
-	}
-	else
-	{
-		mali200_raw_reset(core); /* do the raw reset */
-		mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_MASK, 0); /* then disable the IRQs */
+		case MALI_CORE_RESET_STYLE_RUNABLE:
+			mali200_reset(core);
+			break;
+		case MALI_CORE_RESET_STYLE_DISABLE:
+			mali200_raw_reset(core); /* do the raw reset */
+			mali_core_renderunit_register_write(core, MALI200_REG_ADDR_MGMT_INT_MASK, 0); /* then disable the IRQs */
+			break;
+		case MALI_CORE_RESET_STYLE_HARD:
+			mali200_reset_hard(core);
+			break;
+		default:
+			MALI_DEBUG_PRINT(1, ("Unknown reset type %d\n", style));
 	}
 }
 

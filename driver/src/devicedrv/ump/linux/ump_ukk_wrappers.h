@@ -29,6 +29,7 @@ extern "C"
 int ump_get_api_version_wrapper(u32 __user * argument, struct ump_session_data * session_data);
 int ump_release_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
 int ump_size_get_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
+int ump_msync_wrapper(u32 __user * argument, struct ump_session_data  * session_data);
 
 
 #ifdef __cplusplus

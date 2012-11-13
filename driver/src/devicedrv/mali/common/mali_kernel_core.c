@@ -108,8 +108,8 @@ static struct mali_kernel_subsystem * subsystems[] =
 	&mali_subsystem_pmm,
 #endif
 
-	/* The rendercore subsystem must be intialized before any subsystem based on the
-	 * rendercores are started e.g. mali_subsystem_mali200 and mali_subsystem_gp2 */
+	/* The rendercore subsystem must be initialized before any subsystem based on the
+	 * rendercores is started e.g. mali_subsystem_mali200 and mali_subsystem_gp2 */
 	&mali_subsystem_rendercore,
 
  	/* add reference to the subsystem */
@@ -197,8 +197,11 @@ void mali_kernel_destructor( void )
 
 _mali_osk_errcode_t register_resources( _mali_osk_resource_t **arch_configuration, u32 num_resources )
 {
-    _mali_osk_resource_t *arch_resource = *arch_configuration;
+	_mali_osk_resource_t *arch_resource = *arch_configuration;
 	u32 i;
+#if USING_MALI_PMM
+	u32 is_pmu_first_resource = 1;
+#endif /* USING_MALI_PMM */
 
 	/* loop over arch configuration */
 	for (i = 0; i < num_resources; ++i, arch_resource++)
@@ -207,7 +210,25 @@ _mali_osk_errcode_t register_resources( _mali_osk_resource_t **arch_configuratio
 		      (arch_resource->type < RESOURCE_TYPE_COUNT) &&
 		      (NULL != resource_handler[arch_resource->type])
 		   )
-		{
+		{	
+#if USING_MALI_PMM
+			if((arch_resource->type != PMU) && (is_pmu_first_resource == 1))
+			{
+				_mali_osk_resource_t mali_pmu_virtual_resource;
+				mali_pmu_virtual_resource.type = PMU;
+				mali_pmu_virtual_resource.description = "Virtual PMU";
+				mali_pmu_virtual_resource.base = 0x00000000;
+				mali_pmu_virtual_resource.cpu_usage_adjust = 0;
+				mali_pmu_virtual_resource.size = 0;
+				mali_pmu_virtual_resource.irq = 0;
+				mali_pmu_virtual_resource.flags = 0;
+				mali_pmu_virtual_resource.mmu_id = 0;
+				mali_pmu_virtual_resource.alloc_order = 0;
+				MALI_CHECK_NO_ERROR(resource_handler[mali_pmu_virtual_resource.type](&mali_pmu_virtual_resource));
+			}
+			is_pmu_first_resource = 0;
+#endif /* USING_MALI_PMM */
+
 			MALI_CHECK_NO_ERROR(resource_handler[arch_resource->type](arch_resource));
 			/* the subsystem shutdown process will release all the resources already registered */
 		}
@@ -466,7 +487,7 @@ _mali_osk_errcode_t _mali_ukk_get_system_info( _mali_uk_get_system_info_s *args 
         adjust_ptr_base = args->ukk_private;
     }
 
-	/* copy each struct into the buffer, and update it's pointers */
+	/* copy each struct into the buffer, and update its pointers */
 	current_write_pos = (void *)args->system_info;
 
 	/* first, the master struct */
@@ -647,7 +668,7 @@ _mali_osk_errcode_t mali_kernel_core_validate_mali_phys_range( u32 phys_base, u3
 
 _mali_osk_errcode_t _mali_kernel_core_register_resource_handler(_mali_osk_resource_type_t type, mali_kernel_resource_registrator handler)
 {
-    MALI_CHECK(type < RESOURCE_TYPE_COUNT, _MALI_OSK_ERR_INVALID_ARGS);
+	MALI_CHECK(type < RESOURCE_TYPE_COUNT, _MALI_OSK_ERR_INVALID_ARGS);
 	MALI_DEBUG_ASSERT(NULL == resource_handler[type]); /* A handler for resource already exists */
 	resource_handler[type] = handler;
 	MALI_SUCCESS;
@@ -756,6 +777,9 @@ _mali_osk_errcode_t mali_core_signal_power_up( mali_pmm_core_id core, mali_bool 
 	case MALI_PMM_CORE_L2:
 		if( !queue_only )
 		{
+			/* Enable L2 cache due to power up */			
+			mali_kernel_l2_cache_do_enable();
+
 			/* Invalidate the cache on power up */
 			MALI_DEBUG_PRINT(5, ("L2 Cache: Invalidate all\n"));
 			MALI_CHECK_NO_ERROR(mali_kernel_l2_cache_invalidate_all());

@@ -40,7 +40,8 @@ typedef enum
 typedef enum
 {
 	MALI_CORE_RESET_STYLE_RUNABLE,
-	MALI_CORE_RESET_STYLE_DISABLE
+	MALI_CORE_RESET_STYLE_DISABLE,
+	MALI_CORE_RESET_STYLE_HARD
 } mali_core_reset_style;
 
 typedef enum
@@ -143,6 +144,7 @@ typedef struct mali_core_renderunit
 	struct mali_core_subsystem * subsystem; /* The core belongs to this subsystem */
 	_mali_osk_list_t list;                  /* Is always in subsystem->idle_list OR session->renderunits_working */
 	mali_core_status  state;
+	mali_bool error_recovery;               /* Indicates if the core is waiting for external help to recover (typically the MMU) */
 	struct mali_core_job * current_job;     /* Current job being processed on this core ||NULL */
 	u32 magic_nr;
  	_mali_osk_timer_t * timer;
@@ -162,6 +164,8 @@ typedef struct mali_core_renderunit
 	mali_pmm_core_id pmm_id;                /* The PMM core id */
 	mali_bool pend_power_down;              /* Power down is requested */
 #endif
+
+	u32 core_number;                        /* 0 for first detected core of this type, 1 for second and so on */
 
     _mali_osk_irq_t *irq;
 } mali_core_renderunit;

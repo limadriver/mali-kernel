@@ -15,6 +15,8 @@
 #include <linux/kernel.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
+#include <linux/sched.h>
+#include <linux/module.h>
 #include "mali_osk.h"
 
 void _mali_osk_dbgmsg( const char *fmt, ... )
@@ -34,4 +36,16 @@ void _mali_osk_abort(void)
 void _mali_osk_break(void)
 {
 	_mali_osk_abort();
+}
+
+u32 _mali_osk_get_pid(void)
+{
+	/* Thread group ID is the process ID on Linux */
+	return (u32)current->tgid;
+}
+
+u32 _mali_osk_get_tid(void)
+{
+	/* pid is actually identifying the thread on Linux */
+	return (u32)current->pid;
 }

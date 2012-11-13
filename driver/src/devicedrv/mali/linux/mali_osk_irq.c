@@ -13,6 +13,8 @@
  * Implementation of the OS abstraction layer for the kernel device driver
  */
 
+#include <linux/slab.h>	/* For memory allocation */
+
 #include "mali_osk.h"
 #include "mali_kernel_core.h"
 #include "mali_kernel_common.h"
@@ -39,7 +41,7 @@ static void irq_handler_bottom_half ( void *  input );
 
 /**
  * Linux kernel version has marked SA_SHIRQ as deprecated, IRQF_SHARED should be used.
- * This is to handle older kernels which hasn't done this swap.
+ * This is to handle older kernels which haven't done this swap.
  */
 #ifndef IRQF_SHARED
 #define IRQF_SHARED SA_SHIRQ

@@ -15,6 +15,10 @@
 
 #include "mali_osk.h"
 
+#if USING_MALI_PMM
+#include "mali_pmm.h"
+#endif
+
 #if !USING_MALI_PMM
 /* @brief System power up/down cores that can be passed into mali_platform_powerdown/up() */
 #define MALI_PLATFORM_SYSTEM  0
@@ -65,3 +69,24 @@ _mali_osk_errcode_t mali_platform_powerdown(u32 cores);
  * @return _MALI_OSK_ERR_OK on success otherwise, a suitable _mali_osk_errcode_t error.
  */
 _mali_osk_errcode_t mali_platform_powerup(u32 cores);
+
+/** @brief Platform specific handling of GPU utilization data
+ *
+ * When GPU utilization data is enabled, this function will be
+ * periodically called.
+ *
+ * @param utilization The workload utilization of the Mali GPU. 0 = no utilization, 256 = full utilization.
+ */
+void mali_gpu_utilization_handler(u32 utilization);
+
+#if USING_MALI_PMM
+#if MALI_POWER_MGMT_TEST_SUITE
+/** @brief function to get status of individual cores
+ *
+ * This function is used by power management test suite to get the status of powered up/down the number
+ * of cores
+ * @param utilization The workload utilization of the Mali GPU. 0 = no utilization, 256 = full utilization.
+ */
+u32 pmu_get_power_up_down_info(void);
+#endif
+#endif

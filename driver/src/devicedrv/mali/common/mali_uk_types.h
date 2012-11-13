@@ -49,13 +49,12 @@ extern "C"
  * @see _mali_uk_functions */
 typedef enum
 {
-    _MALI_UK_CORE_SUBSYSTEM,    /**< Core Group of U/K calls */
-    _MALI_UK_MEMORY_SUBSYSTEM,  /**< Memory Group of U/K calls */
-    _MALI_UK_PP_SUBSYSTEM,      /**< Fragment Processor Group of U/K calls */
-    _MALI_UK_GP_SUBSYSTEM,      /**< Vertex Processor Group of U/K calls */
-#if USING_MALI_PMM
-    _MALI_UK_PMM_SUBSYSTEM,     /**< Power Management Module Group of U/K calls */
-#endif
+    _MALI_UK_CORE_SUBSYSTEM,      /**< Core Group of U/K calls */
+    _MALI_UK_MEMORY_SUBSYSTEM,    /**< Memory Group of U/K calls */
+    _MALI_UK_PP_SUBSYSTEM,        /**< Fragment Processor Group of U/K calls */
+    _MALI_UK_GP_SUBSYSTEM,        /**< Vertex Processor Group of U/K calls */
+	_MALI_UK_PROFILING_SUBSYSTEM, /**< Profiling Group of U/K calls */
+    _MALI_UK_PMM_SUBSYSTEM,       /**< Power Management Module Group of U/K calls */
 } _mali_uk_subsystem_t;
 
 /** Within a function group each function has its unique sequence number
@@ -112,7 +111,15 @@ typedef enum
     _MALI_UK_GET_GP_NUMBER_OF_CORES  = _MALI_UK_GET_NUMBER_OF_CORES,  /**< _mali_ukk_get_gp_number_of_cores() */
     _MALI_UK_GET_GP_CORE_VERSION     = _MALI_UK_GET_CORE_VERSION,     /**< _mali_ukk_get_gp_core_version() */
     _MALI_UK_GP_SUSPEND_RESPONSE,                                     /**< _mali_ukk_gp_suspend_response() */
-    
+
+	/** Profiling functions */
+
+	_MALI_UK_PROFILING_START         = 0, /**< __mali_uku_profiling_start() */
+	_MALI_UK_PROFILING_ADD_EVENT,         /**< __mali_uku_profiling_add_event() */
+	_MALI_UK_PROFILING_STOP,              /**< __mali_uku_profiling_stop() */
+	_MALI_UK_PROFILING_GET_EVENT,         /**< __mali_uku_profiling_get_event() */
+	_MALI_UK_PROFILING_CLEAR,             /**< __mali_uku_profiling_clear() */
+
 #if USING_MALI_PMM
     /** Power Management Module Functions */
     _MALI_UK_PMM_EVENT_MESSAGE = 0,       /**< Raise an event message */
@@ -395,15 +402,15 @@ typedef enum
  * cache hits). For source id values, see ARM DDI0415A, Table 3-60.
  * - pass in the user-kernel context @c ctx that was returned from _mali_ukk_open()
  *
- * When @c_mali_ukk_gp_start_job() returns @c_MALI_OSK_ERR_OK, status contains the
+ * When @c _mali_ukk_gp_start_job() returns @c _MALI_OSK_ERR_OK, status contains the
  * result of the request (see \ref _mali_uk_start_job_status). If the job could
- * not get started (@c_MALI_UK_START_JOB_NOT_STARTED_DO_REQUEUE) it should be
+ * not get started (@c _MALI_UK_START_JOB_NOT_STARTED_DO_REQUEUE) it should be
  * tried again. If the job had a higher priority than the one currently pending
- * execution (@c_MALI_UK_START_JOB_STARTED_LOW_PRI_JOB_RETURNED), it will bump
- * the lower priority job and returns the address of the @cmali_gp_job_info
- * for that job in @creturned_user_job_ptr. That job should get requeued.
+ * execution (@c _MALI_UK_START_JOB_STARTED_LOW_PRI_JOB_RETURNED), it will bump
+ * the lower priority job and returns the address of the @c mali_gp_job_info
+ * for that job in @c returned_user_job_ptr. That job should get requeued.
  *
- * After the job has started, @c_mali_wait_for_notification() will be notified
+ * After the job has started, @c _mali_wait_for_notification() will be notified
  * that the job finished or got suspended. It may get suspended due to
  * resource shortage. If it finished (see _mali_ukk_wait_for_notification())
  * the notification will contain a @c _mali_uk_gp_job_finished_s result. If
@@ -440,7 +447,7 @@ typedef struct
     u32 priority;                       /**< [in] job priority. A lower number means higher priority */
     u32 watchdog_msecs;                 /**< [in] maximum allowed runtime in milliseconds. The job gets killed if it runs longer than this. A value of 0 selects the default used by the device driver. */
     u32 frame_registers[MALIGP2_NUM_REGS_FRAME]; /**< [in] core specific registers associated with this job */
-    u32 perf_counter_flag;              /**< [in] bitmask indicating which performance counters to enable, see \ref _MALI_PERFORMANCE_COUNTER_FLAG macro definitions */
+    u32 perf_counter_flag;              /**< [in] bitmask indicating which performance counters to enable, see \ref _MALI_PERFORMANCE_COUNTER_FLAG_SRC0_ENABLE and related macro definitions */
     u32 perf_counter_src0;              /**< [in] source id for performance counter 0 (see ARM DDI0415A, Table 3-60) */
     u32 perf_counter_src1;              /**< [in] source id for performance counter 1 (see ARM DDI0415A, Table 3-60) */
     u32 returned_user_job_ptr;          /**< [out] identifier for the returned job in user space, a @c mali_gp_job_info* */
@@ -450,12 +457,11 @@ typedef struct
 	u32 perf_counter_l2_src1;           /**< [in] source id for Mali-400 MP L2 cache performance counter 1 */
 } _mali_uk_gp_start_job_s;
 
-/** @brief _MALI_PERFORMANCE_COUNTER_FLAG Bitmask indicating which performance counters need to be enabled for a job */
-#define _MALI_PERFORMANCE_COUNTER_FLAG_SRC0_ENABLE (1<<0)
-#define _MALI_PERFORMANCE_COUNTER_FLAG_SRC1_ENABLE (1<<1)
-#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_SRC0_ENABLE (1<<2)
-#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_SRC1_ENABLE (1<<3)
-#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_RESET       (1<<4)
+#define _MALI_PERFORMANCE_COUNTER_FLAG_SRC0_ENABLE (1<<0) /**< Enable performance counter SRC0 for a job */
+#define _MALI_PERFORMANCE_COUNTER_FLAG_SRC1_ENABLE (1<<1) /**< Enable performance counter SRC1 for a job */
+#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_SRC0_ENABLE (1<<2) /**< Enable performance counter L2_SRC0 for a job */
+#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_SRC1_ENABLE (1<<3) /**< Enable performance counter L2_SRC1 for a job */
+#define _MALI_PERFORMANCE_COUNTER_FLAG_L2_RESET       (1<<4) /**< Enable performance counter L2_RESET for a job */
 
 /** @} */ /* end group _mali_uk_gpstartjob_s */
 
@@ -519,7 +525,7 @@ typedef struct
  * cache hits). For source id values, see ARM DDI0415A, Table 3-60.
  * - pass in the user-kernel context in @c ctx that was returned from _mali_ukk_open()
  *
- * When _mali_ukk_pp_start_job() returns @c _MALI_OSK_ERR_OK, @cstatus contains the
+ * When _mali_ukk_pp_start_job() returns @c _MALI_OSK_ERR_OK, @c status contains the
  * result of the request (see \ref _mali_uk_start_job_status). If the job could
  * not get started (@c _MALI_UK_START_JOB_NOT_STARTED_DO_REQUEUE) it should be
  * tried again. If the job had a higher priority than the one currently pending
@@ -554,7 +560,7 @@ typedef struct
     u32 wb0_registers[MALI200_NUM_REGS_WBx];
     u32 wb1_registers[MALI200_NUM_REGS_WBx];
     u32 wb2_registers[MALI200_NUM_REGS_WBx];
-    u32 perf_counter_flag;              /**< [in] bitmask indicating which performance counters to enable, see _MALI_PERFORMANCE_COUNTER_FLAG_xxx macro definitions */
+    u32 perf_counter_flag;              /**< [in] bitmask indicating which performance counters to enable, see \ref _MALI_PERFORMANCE_COUNTER_FLAG_SRC0_ENABLE and related macro definitions */
     u32 perf_counter_src0;              /**< [in] source id for performance counter 0 (see ARM DDI0415A, Table 3-60) */
     u32 perf_counter_src1;              /**< [in] source id for performance counter 1 (see ARM DDI0415A, Table 3-60) */
     u32 returned_user_job_ptr;          /**< [out] identifier for the returned job in user space */
@@ -823,12 +829,12 @@ typedef struct
 	u32 phys_addr;                  /**< [in] physical address */
 	u32 size;                       /**< [in] size */
 	u32 mali_address;               /**< [in] mali address to map the physical memory to */
-	u32 rights;                     /**< [in] rights necessary for accessing memory (see \ref mali_mem_rights) */
-	u32 flags;                      /**< [in] flags, see \ref _MALI_MAP_EXTERNAL_FLAG macro definitions */
+	u32 rights;                     /**< [in] rights necessary for accessing memory */
+	u32 flags;                      /**< [in] flags, see \ref _MALI_MAP_EXTERNAL_MAP_GUARD_PAGE */
 	u32 cookie;                     /**< [out] identifier for mapped memory object in kernel space  */
 } _mali_uk_map_external_mem_s;
 
-/** @brief _MALI_MAP_EXTERNAL_FLAG Flags for _mali_uk_map_external_mem_s and _mali_uk_attach_ump_mem_s */
+/** Flag for _mali_uk_map_external_mem_s and _mali_uk_attach_ump_mem_s */
 #define _MALI_MAP_EXTERNAL_MAP_GUARD_PAGE (1<<0)
 
 /** @note Mali-MMU only */
@@ -845,8 +851,8 @@ typedef struct
 	u32 secure_id;                  /**< [in] secure id */
 	u32 size;                       /**< [in] size */
 	u32 mali_address;               /**< [in] mali address to map the physical memory to */
-	u32 rights;                     /**< [in] rights necessary for accessing memory (see \ref mali_mem_rights) */
-	u32 flags;                      /**< [in] flags, see \ref _MALI_MAP_EXTERNAL_FLAG macro definitions */
+	u32 rights;                     /**< [in] rights necessary for accessing memory */
+	u32 flags;                      /**< [in] flags, see \ref _MALI_MAP_EXTERNAL_MAP_GUARD_PAGE */
 	u32 cookie;                     /**< [out] identifier for mapped memory object in kernel space  */
 } _mali_uk_attach_ump_mem_s;
 
@@ -975,6 +981,41 @@ typedef struct
     void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
     u32 abort_id;                   /**< [in] ID of job(s) to abort */
 } _mali_uk_gp_abort_job_s;
+
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	u32 limit;                      /**< [in,out] The desired limit for number of events to record on input, actual limit on output */
+} _mali_uk_profiling_start_s;
+
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	u32 event_id;                   /**< [in] event id to register (see  enum mali_profiling_events for values) */
+	u32 data[5];                    /**< [in] event specific data */
+} _mali_uk_profiling_add_event_s;
+
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	u32 count;                      /**< [out] The number of events sampled */
+} _mali_uk_profiling_stop_s;
+
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	u32 index;                      /**< [in] which index to get (starting at zero) */
+	u64 timestamp;                  /**< [out] timestamp of event */
+	u32 event_id;                   /**< [out] event id of event (see  enum mali_profiling_events for values) */
+	u32 data[5];                    /**< [out] event specific data */
+} _mali_uk_profiling_get_event_s;
+
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+} _mali_uk_profiling_clear_s;
+
+
 
 /** @} */ /* end group _mali_uk_gp */
 

@@ -639,6 +639,42 @@ void _mali_ukk_pmm_event_message( _mali_uk_pmm_message_s *args );
 /** @} */ /* end group _mali_uk_pmm */
 #endif /* USING_MALI_PMM */
 
+#if MALI_TIMELINE_PROFILING_ENABLED
+/** @addtogroup _mali_uk_profiling U/K Timeline profiling module
+ * @{ */
+
+/** @brief Start recording profiling events.
+ *
+ * @param args see _mali_uk_profiling_start_s in "mali_uk_types.h"
+ */
+_mali_osk_errcode_t _mali_ukk_profiling_start(_mali_uk_profiling_start_s *args);
+
+/** @brief Add event to profiling buffer.
+ *
+ * @param args see _mali_uk_profiling_add_event_s in "mali_uk_types.h"
+ */
+_mali_osk_errcode_t _mali_ukk_profiling_add_event(_mali_uk_profiling_add_event_s *args);
+
+/** @brief Stop recording profiling events.
+ * 
+ * @param args see _mali_uk_profiling_stop_s in "mali_uk_types.h"
+ */
+_mali_osk_errcode_t _mali_ukk_profiling_stop(_mali_uk_profiling_stop_s *args);
+
+/** @brief Retrieve a recorded profiling event.
+ *
+ * @param args see _mali_uk_profiling_get_event_s in "mali_uk_types.h"
+ */
+_mali_osk_errcode_t _mali_ukk_profiling_get_event(_mali_uk_profiling_get_event_s *args);
+
+/** @brief Clear recorded profiling events.
+ *
+ * @param args see _mali_uk_profiling_clear_s in "mali_uk_types.h"
+ */
+_mali_osk_errcode_t _mali_ukk_profiling_clear(_mali_uk_profiling_clear_s *args);
+
+/** @} */ /* end group _mali_uk_profiling */
+#endif
 
 /** @} */ /* end group u_k_api */
 

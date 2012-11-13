@@ -152,7 +152,7 @@ void _mali_osk_mem_mapregion_term( mali_memory_allocation * descriptor );
  * This need not provide a mapping for the entire virtual address range
  * reserved for \a descriptor - it may be used to map single pages per call.
  *
- * The function will always be called with \ref MALI_MEMORY_ALLOCATION_FLAG_MAP_INTO_USERSPACE
+ * The function will always be called with MALI_MEMORY_ALLOCATION_FLAG_MAP_INTO_USERSPACE
  * set in \a descriptor->flags. It is an error to call this function without
  * setting this flag. Otherwise, \a descriptor->flags bits are reserved for
  * future expansion
@@ -222,7 +222,7 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
  * calls must be made if allocations of these different types exist across the
  * entire region described by the \a descriptor.
  *
- * The function will always be called with \ref MALI_MEMORY_ALLOCATION_FLAG_MAP_INTO_USERSPACE
+ * The function will always be called with MALI_MEMORY_ALLOCATION_FLAG_MAP_INTO_USERSPACE
  * set in \a descriptor->flags. It is an error to call this function without
  * setting this flag. Otherwise, \a descriptor->flags bits are reserved for
  * future expansion

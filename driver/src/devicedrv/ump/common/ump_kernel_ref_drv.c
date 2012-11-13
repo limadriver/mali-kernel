@@ -93,6 +93,8 @@ UMP_KERNEL_API_EXPORT ump_dd_handle ump_dd_handle_create_from_phys_blocks(ump_dd
 	mem->backend_info = NULL;
 	mem->ctx = NULL;
 	mem->release_func = phys_blocks_release;
+	/* For now UMP handles created by ump_dd_handle_create_from_phys_blocks() is forced to be Uncached */
+	mem->is_cached = 0;
 
 	_mali_osk_lock_signal(device.secure_id_map_lock, _MALI_OSK_LOCKMODE_RW);
 	DBG_MSG(3, ("UMP memory created. ID: %u, size: %lu\n", mem->secure_id, mem->size_bytes));
@@ -150,6 +152,9 @@ _mali_osk_errcode_t _ump_ukk_allocate( _ump_uk_allocate_s *user_interaction )
 	/* Initialize the part of the new_allocation that we know so for */
 	new_allocation->secure_id = (ump_secure_id)map_id;
 	_mali_osk_atomic_init(&new_allocation->ref_count,1);
+	if ( 0==(UMP_REF_DRV_UK_CONSTRAINT_USE_CACHE & user_interaction->constraints) )
+		 new_allocation->is_cached = 0;
+	else new_allocation->is_cached = 1;
 
 	/* special case a size of 0, we should try to emulate what malloc does in this case, which is to return a valid pointer that must be freed, but can't be dereferences */
 	if (0 == user_interaction->size)

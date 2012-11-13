@@ -15,6 +15,14 @@
 
 static _mali_osk_resource_t arch_configuration [] =
 {
+
+    	{
+                .type = PMU,
+                .description = "Mali-400 PMU",
+                .base = 0xC0002000,
+                .irq = -1,
+                .mmu_id = 0
+        },
 	{
 		.type = MALI400GP,
 		.description = "Mali-400 GP",
@@ -48,7 +56,7 @@ static _mali_osk_resource_t arch_configuration [] =
 	{
 		.type = OS_MEMORY,
 		.description = "OS Memory",
-		.alloc_order = 0, /* Lowest preference for this memory */
+		.alloc_order = 10, /* Lowest preference for this memory */
 		.size = 96 * 1024 * 1024, /* 96 MB */
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
@@ -57,7 +65,7 @@ static _mali_osk_resource_t arch_configuration [] =
 		.type = MEMORY,
 		.description = "Mali SDRAM remapped to baseboard",
 		.cpu_usage_adjust = 0,
-		.alloc_order = 1, /* Highest preference for this memory */
+		.alloc_order = 5, /* Medium preference for this memory */
 #if MALI_USE_UNIFIED_MEMORY_PROVIDER != 0
 		.base = 0x82000000, /* Reserving 32MB for UMP devicedriver */
 		.size = 0x0E000000,
@@ -72,9 +80,9 @@ static _mali_osk_resource_t arch_configuration [] =
 	{
 		.type = MEMORY,
 		.description = "Mali ZBT",
-		.alloc_order = 5, /* Medium preference for this memory */
-		.base = 0xe0800000,
-		.size = 0x01800000,
+		.alloc_order = 0, /* Highest preference for this memory */
+		.base = 0xe1000000,
+		.size = 0x01000000,
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_READABLE | _MALI_PP_WRITEABLE |_MALI_GP_READABLE | _MALI_GP_WRITEABLE
 	},
 #endif
@@ -82,7 +90,7 @@ static _mali_osk_resource_t arch_configuration [] =
 		.type = MEM_VALIDATION,
 		.description = "Framebuffer",
 		.base = 0xe0000000,
-		.size = 0x00800000,
+		.size = 0x01000000,
 		.flags = _MALI_CPU_WRITEABLE | _MALI_CPU_READABLE | _MALI_PP_WRITEABLE | _MALI_PP_READABLE
 	},
 	{

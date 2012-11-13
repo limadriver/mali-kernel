@@ -159,7 +159,9 @@ enum mali200_wb_unit {
 #if defined USING_MALI200
 #define MALI_PP_PRODUCT_ID 0xC807
 #elif defined USING_MALI400
-#define MALI_PP_PRODUCT_ID 0xCD07
+#define MALI300_PP_PRODUCT_ID 0xCE07
+#define MALI400_PP_PRODUCT_ID 0xCD07
+#define MALI_PP_PRODUCT_ID MALI400_PP_PRODUCT_ID
 #else
 #error "No supported mali core defined"
 #endif

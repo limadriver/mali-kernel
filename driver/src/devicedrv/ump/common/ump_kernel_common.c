@@ -19,13 +19,23 @@
 #include "ump_kernel_descriptor_mapping.h"
 #include "ump_kernel_memory_backend.h"
 
+
+
+/**
+ * Define the initial and maximum size of number of secure_ids on the system
+ */
+#define UMP_SECURE_ID_TABLE_ENTRIES_INITIAL (128  )
+#define UMP_SECURE_ID_TABLE_ENTRIES_MAXIMUM (4096 )
+
+
 /**
  * Define the initial and maximum size of the ump_session_data::cookies_map,
  * which is a \ref ump_descriptor_mapping. This limits how many secure_ids
  * may be mapped into a particular process using _ump_ukk_map_mem().
  */
-#define UMP_COOKIES_PER_SESSION_INITIAL (16)
-#define UMP_COOKIES_PER_SESSION_MAXIMUM (256)
+
+#define UMP_COOKIES_PER_SESSION_INITIAL (UMP_SECURE_ID_TABLE_ENTRIES_INITIAL )
+#define UMP_COOKIES_PER_SESSION_MAXIMUM (UMP_SECURE_ID_TABLE_ENTRIES_MAXIMUM)
 
 struct ump_dev device;
 
@@ -45,14 +55,14 @@ _mali_osk_errcode_t ump_kernel_constructor(void)
 	_mali_osk_memset(&device, 0, sizeof(device) );
 
 	/* Create the descriptor map, which will be used for mapping secure ID to ump_dd_mem structs */
-	device.secure_id_map_lock = _mali_osk_lock_init(_MALI_OSK_LOCKFLAG_SPINLOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0 , 0);
+	device.secure_id_map_lock = _mali_osk_lock_init(_MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0 , 0);
 	if (NULL == device.secure_id_map_lock)
 	{
 		MSG_ERR(("Failed to create OSK lock for secure id lookup table\n"));
 		return _MALI_OSK_ERR_NOMEM;
 	}
 
-	device.secure_id_map = ump_descriptor_mapping_create(16, 256);
+	device.secure_id_map = ump_descriptor_mapping_create(UMP_SECURE_ID_TABLE_ENTRIES_INITIAL, UMP_SECURE_ID_TABLE_ENTRIES_MAXIMUM);
 	if (NULL == device.secure_id_map)
 	{
 		_mali_osk_lock_term(device.secure_id_map_lock);
@@ -106,7 +116,7 @@ _mali_osk_errcode_t _ump_ukk_open( void** context )
 		return _MALI_OSK_ERR_NOMEM;
 	}
 
-	session_data->lock = _mali_osk_lock_init(_MALI_OSK_LOCKFLAG_SPINLOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 0);
+	session_data->lock = _mali_osk_lock_init(_MALI_OSK_LOCKFLAG_NONINTERRUPTABLE, 0, 0);
 	if( NULL == session_data->lock )
 	{
 		MSG_ERR(("Failed to initialize lock for ump_session_data in ump_file_open()\n"));
@@ -129,8 +139,11 @@ _mali_osk_errcode_t _ump_ukk_open( void** context )
 
 	_MALI_OSK_INIT_LIST_HEAD(&session_data->list_head_session_memory_mappings_list);
 
-	/* Assume latest known API version to begin with. This can later be changed by client through an IOCTL */
-	session_data->api_version = UMP_IOCTL_API_VERSION;
+	/* Since initial version of the UMP interface did not use the API_VERSION ioctl we have to assume
+	   that it is this version, and not the "latest" one: UMP_IOCTL_API_VERSION
+	   Current and later API versions would do an additional call to this IOCTL and update this variable
+	   to the correct one.*/
+	session_data->api_version = MAKE_VERSION_ID(1);
 
 	*context = (void*)session_data;
 
@@ -202,12 +215,12 @@ _mali_osk_errcode_t _ump_ukk_close( void** context )
 _mali_osk_errcode_t _ump_ukk_map_mem( _ump_uk_map_mem_s *args )
 {
 	struct ump_session_data * session_data;
-	ump_memory_allocation * descriptor;
+	ump_memory_allocation * descriptor;  /* Describes current mapping of memory */
 	_mali_osk_errcode_t err;
 	unsigned long offset = 0;
 	unsigned long left;
-	ump_dd_handle handle;
-	ump_dd_mem * mem;
+	ump_dd_handle handle;  /* The real UMP handle for this memory. Its real datatype is ump_dd_mem*  */
+	ump_dd_mem * mem;      /* The real UMP memory. It is equal to the handle, but with exposed struct */
 	u32 block;
 	int map_id;
 
@@ -261,6 +274,25 @@ _mali_osk_errcode_t _ump_ukk_map_mem( _ump_uk_map_mem_s *args )
 	descriptor->ump_session = session_data;
 	descriptor->cookie = (u32)map_id;
 
+	if ( mem->is_cached )
+	{
+		descriptor->is_cached = 1;
+		args->is_cached       = 1;
+		DBG_MSG(3, ("Mapping UMP secure_id: %d as cached.\n", args->secure_id));
+	}
+	else if ( args->is_cached)
+	{
+		mem->is_cached = 1;
+		descriptor->is_cached = 1;
+		DBG_MSG(3, ("Warning mapping UMP secure_id: %d. As cached, while it was allocated uncached.\n", args->secure_id));
+	}
+	else
+	{
+		descriptor->is_cached = 0;
+		args->is_cached       = 0;
+		DBG_MSG(3, ("Mapping UMP secure_id: %d  as Uncached.\n", args->secure_id));
+	}
+
 	_mali_osk_list_init( &descriptor->list );
 
 	err = _ump_osk_mem_mapregion_init( descriptor );
@@ -294,7 +326,7 @@ _mali_osk_errcode_t _ump_ukk_map_mem( _ump_uk_map_mem_s *args )
 			size_to_map = left;
 		}
 
-		if (_ump_osk_mem_mapregion_map(descriptor, offset, mem->block_array[block].addr, size_to_map )	)
+		if (_MALI_OSK_ERR_OK != _ump_osk_mem_mapregion_map(descriptor, offset, (u32 *)&(mem->block_array[block].addr), size_to_map ) )
 		{
 			DBG_MSG(1, ("WARNING: _ump_ukk_map_mem failed to map memory into userspace\n"));
 			ump_descriptor_mapping_free( session_data->cookies_map, map_id );

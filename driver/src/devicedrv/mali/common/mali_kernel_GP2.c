@@ -15,6 +15,9 @@
 #include "mali_kernel_rendercore.h"
 #include "mali_osk.h"
 #include "mali_osk_list.h"
+#if MALI_TIMELINE_PROFILING_ENABLED
+#include "mali_kernel_profiling.h"
+#endif
 #if defined(USING_MALI400_L2_CACHE)
 #include "mali_kernel_l2_cache.h"
 #endif
@@ -76,6 +79,11 @@ typedef struct maligp_job
 	u32 perf_counter_l2_val0;
 	u32 perf_counter_l2_val1;
 #endif
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	u32 pid;
+	u32 tid;
+#endif
 } maligp_job;
 
 /*Functions Exposed to the General External System through
@@ -97,6 +105,7 @@ static void maligp_subsystem_broadcast_notification(mali_core_notification_messa
 /* Internal support functions  */
 static _mali_osk_errcode_t maligp_core_version_legal( mali_core_renderunit *core );
 static void maligp_raw_reset( mali_core_renderunit *core);
+static void maligp_reset_hard(struct mali_core_renderunit * core);
 static void maligp_reset(mali_core_renderunit *core);
 static void maligp_initialize_registers_mgmt(mali_core_renderunit *core );
 
@@ -417,7 +426,11 @@ static _mali_osk_errcode_t maligp_core_version_legal( mali_core_renderunit *core
 
 	mali_type = core->core_version >> 16;
 
-	if (  MALI_GP_PRODUCT_ID != mali_type)
+#if defined(USING_MALI400)
+	if (  MALI400_GP_PRODUCT_ID != mali_type && MALI300_GP_PRODUCT_ID != mali_type )
+#else
+	if (  MALI_GP_PRODUCT_ID != mali_type )
+#endif
 	{
 		MALI_PRINT_ERROR(("Error: reading this from maligp version register: 0x%x\n", core->core_version));
         MALI_ERROR(_MALI_OSK_ERR_FAULT);
@@ -439,45 +452,15 @@ static void maligp_reset( mali_core_renderunit *core )
 	}
 }
 
-static void maligp_raw_reset( mali_core_renderunit *core )
+
+static void maligp_reset_hard( mali_core_renderunit *core )
 {
-	int i;
-	const int request_loop_count = 20;
 	const int reset_finished_loop_count = 15;
 	const u32 reset_wait_target_register = MALIGP2_REG_ADDR_MGMT_WRITE_BOUND_LOW;
 	const u32 reset_invalid_value = 0xC0FFE000;
 	const u32 reset_check_value = 0xC01A0000;
 	const u32 reset_default_value = 0;
-
-	MALI_DEBUG_PRINT(4, ("Mali GP: maligp_raw_reset: %s\n", core->description)) ;
-	if (mali_benchmark) return;
-
-	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_MASK, 0); /* disable the IRQs */
-
-#if defined(USING_MALI200)
-
-	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_CMD, MALIGP2_REG_VAL_CMD_STOP_BUS);
-
-	for (i = 0; i < request_loop_count; i++)
-	{
-		if (mali_core_renderunit_register_read(core, MALIGP2_REG_ADDR_MGMT_STATUS) & MALIGP2_REG_VAL_STATUS_BUS_STOPPED) break;
-		_mali_osk_time_ubusydelay(10);
-	}
-
-	MALI_DEBUG_PRINT_IF(1, request_loop_count == i, ("Mali GP: Bus was never stopped during core reset\n"));
-
-#if USING_MMU
-	if ( (request_loop_count==i) && (NULL!=core->mmu) )
-	{
-		/* Could not stop bus connections from core, probably because some of the already pending
-		bus request has had a page fault, and therefore can not complete before the MMU does PageFault
-		handling. This can be treated as a heavier reset function - which unfortunately reset all
-		the cores on this MMU in addition to the MMU itself */
-		MALI_DEBUG_PRINT(1, ("Mali GP: Forcing Bus reset\n"));
-		mali_kernel_mmu_force_bus_reset(core->mmu);
-		return;
-	}
-#endif
+	int i;
 
 	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_invalid_value);
 
@@ -500,6 +483,53 @@ static void maligp_raw_reset( mali_core_renderunit *core )
 
 	mali_core_renderunit_register_write(core, reset_wait_target_register, reset_default_value); /* set it back to the default */
 	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_CLEAR, MALIGP2_REG_VAL_IRQ_MASK_ALL);
+	
+
+}
+
+static void maligp_raw_reset( mali_core_renderunit *core )
+{
+	int i;
+	const int request_loop_count = 20;
+
+	MALI_DEBUG_PRINT(4, ("Mali GP: maligp_raw_reset: %s\n", core->description)) ;
+	if (mali_benchmark) return;
+
+	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_MASK, 0); /* disable the IRQs */
+
+#if defined(USING_MALI200)
+
+	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_CMD, MALIGP2_REG_VAL_CMD_STOP_BUS);
+
+	for (i = 0; i < request_loop_count; i++)
+	{
+		if (mali_core_renderunit_register_read(core, MALIGP2_REG_ADDR_MGMT_STATUS) & MALIGP2_REG_VAL_STATUS_BUS_STOPPED) break;
+		_mali_osk_time_ubusydelay(10);
+	}
+
+	MALI_DEBUG_PRINT_IF(1, request_loop_count == i, ("Mali GP: Bus was never stopped during core reset\n"));
+
+	if (request_loop_count==i)
+	{
+		/* Could not stop bus connections from core, probably because some of the already pending
+		bus request has had a page fault, and therefore can not complete before the MMU does PageFault
+		handling. This can be treated as a heavier reset function - which unfortunately reset all
+		the cores on this MMU in addition to the MMU itself */
+#if USING_MMU
+		if ((NULL!=core->mmu) && (MALI_FALSE == core->error_recovery))
+		{
+			MALI_DEBUG_PRINT(1, ("Mali GP: Forcing MMU bus reset\n"));
+			mali_kernel_mmu_force_bus_reset(core->mmu);
+			return;
+		}
+#endif
+		MALI_PRINT(("A MMU reset did not allow GP to stop its bus, system failure, unable to recover\n"));
+		return;
+	}
+
+	/* the bus was stopped OK, complete the reset */
+	/* use the hard reset routine to do the actual reset */
+	maligp_reset_hard(core);
 
 #elif defined(USING_MALI400)
 
@@ -509,61 +539,30 @@ static void maligp_raw_reset( mali_core_renderunit *core )
 	for (i = 0; i < request_loop_count; i++)
 	{
 		if (mali_core_renderunit_register_read(core, MALIGP2_REG_ADDR_MGMT_INT_RAWSTAT) & /*Bitwise OR*/
-				  MALI400GP_REG_VAL_IRQ_RESET_COMPLETED) break;
+				MALI400GP_REG_VAL_IRQ_RESET_COMPLETED) break;
 		_mali_osk_time_ubusydelay(10);
 	}
 
+	if ( request_loop_count==i )
+	{
 #if USING_MMU
-	if ( (request_loop_count==i) && (NULL!=core->mmu) )
-	{
 		/* Could not stop bus connections from core, probably because some of the already pending
-		bus request has had a page fault, and therefore can not complete before the MMU does PageFault
-		handling. This can be treated as a heavier reset function - which unfortunately reset all
-		the cores on this MMU in addition to the MMU itself */
-		MALI_DEBUG_PRINT(1, ("Mali GP: Forcing Bus reset\n"));
-		mali_kernel_mmu_force_bus_reset(core->mmu);
-		return;
-	}
+		   bus request has had a page fault, and therefore can not complete before the MMU does PageFault
+		   handling. This can be treated as a heavier reset function - which unfortunately reset all
+		   the cores on this MMU in addition to the MMU itself */
+		if ((NULL!=core->mmu) && (MALI_FALSE == core->error_recovery))
+		{
+			MALI_DEBUG_PRINT(1, ("Mali GP: Forcing Bus reset\n"));
+			mali_kernel_mmu_force_bus_reset(core->mmu);
+			return;
+		}
 #endif
-
-	if (i == request_loop_count)
-	{
-		MALI_DEBUG_PRINT(1, ("Mali GP: Did not receive reset completed signal\n"));
-
-		mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_MASK, 0); /* disable the IRQs */
-		mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_CMD, MALIGP2_REG_VAL_CMD_STOP_BUS);
-
-		for (i = 0; i < request_loop_count; i++)
-		{
-			if (mali_core_renderunit_register_read(core, MALIGP2_REG_ADDR_MGMT_STATUS) & MALIGP2_REG_VAL_STATUS_BUS_STOPPED) break;
-			_mali_osk_time_ubusydelay(10);
-		}
-
-		MALI_DEBUG_PRINT_IF(1, request_loop_count == i, ("Mali GP: Bus was never stopped during core reset\n"));
-
-		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_invalid_value);
-
-		mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_CMD, MALIGP2_REG_VAL_CMD_RESET);
-
-		for (i = 0; i < reset_finished_loop_count; i++)
-		{
-			mali_core_renderunit_register_write(core, reset_wait_target_register, reset_check_value);
-			if (reset_check_value == mali_core_renderunit_register_read(core, reset_wait_target_register))
-			{
-				MALI_DEBUG_PRINT(5, ("Reset loop exiting after %d iterations\n", i));
-				break;
-			}
-		}
-
-		if (i == reset_finished_loop_count)
-		{
-			MALI_DEBUG_PRINT(1, ("The reset loop didn't work\n"));
-		}
-
-		mali_core_renderunit_register_write(core, reset_wait_target_register, reset_default_value); /* set it back to the default */
+		MALI_PRINT(("A MMU reset did not allow GP to stop its bus, system failure, unable to recover\n"));
 	}
-
-	mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_CLEAR, MALIGP2_REG_VAL_IRQ_MASK_ALL);
+	else
+	{
+		mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_CLEAR, MALIGP2_REG_VAL_IRQ_MASK_ALL);
+	}
 
 #else
 #error "no supported mali core defined"
@@ -704,6 +703,11 @@ static _mali_osk_errcode_t subsystem_maligp_start_job(mali_core_job * job, mali_
 	mali_core_renderunit_register_write(core,
 										MALIGP2_REG_ADDR_MGMT_CMD,
 										startcmd);
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_START|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), jobgp->pid, jobgp->tid, 0, 0, 0);
+#endif
+
 	MALI_SUCCESS;
 }
 
@@ -782,6 +786,10 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 
 	if ( 0 != jobgp->is_stalled_waiting_for_more_memory )
 	{
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status? */
+#endif
+
 		/* Readback the performance counters */
 		if (jobgp->user_input.perf_counter_flag & (_MALI_PERFORMANCE_COUNTER_FLAG_SRC0_ENABLE|_MALI_PERFORMANCE_COUNTER_FLAG_SRC1_ENABLE) )
 		{
@@ -824,6 +832,10 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 	/* finished ? */
 	else if (0 == (core_status & MALIGP2_REG_VAL_STATUS_MASK_ACTIVE))
 	{
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status? */
+#endif
+
 #ifdef DEBUG
 		MALI_DEBUG_PRINT(4, ("Mali GP: Registers On job end:\n"));
 		maligp_print_regs(4, core);
@@ -891,6 +903,11 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 	        )
 	{
 		/* no progress detected, killed by the watchdog */
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status? */
+#endif
+
 		MALI_DEBUG_PRINT(1, ("Mali GP: SW-Timeout. Regs:\n"));
 		if (core_status & MALIGP2_REG_VAL_STATUS_VS_ACTIVE) MALI_DEBUG_PRINT(1, ("vscl current = 0x%x last = 0x%x\n", (void*)vscl, (void*)jobgp->last_vscl));
 		if (core_status & MALIGP2_REG_VAL_STATUS_PLBU_ACTIVE) MALI_DEBUG_PRINT(1, ("plbcl current = 0x%x last = 0x%x\n", (void*)plbcl, (void*)jobgp->last_plbcl));
@@ -908,6 +925,11 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 		mali_core_session *session;
 		_mali_osk_notification_t *notific;
 		_mali_uk_gp_job_suspended_s * suspended_job;
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_SUSPEND|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status? */
+#endif
+
 		session = job->session;
 
 		MALI_DEBUG_PRINT(4, ("OOM, new heap requested by GP\n"));
@@ -957,7 +979,7 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 	{
 		/* check interval in ms */
 		u32 timeout = mali_core_hang_check_timeout_get();
-		MALI_DEBUG_PRINT(1, ("Mali GP: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
+		MALI_DEBUG_PRINT(3, ("Mali GP: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
 		core->state = CORE_WORKING;
 
 		/* save state for the progress checking */
@@ -985,6 +1007,10 @@ static int subsystem_maligp_irq_handler_bottom_half(mali_core_renderunit* core)
 	/* Else there must be some error */
 	else
 	{
+#if MALI_TIMELINE_PROFILING_ENABLED
+		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status? */
+#endif
+
 		MALI_DEBUG_PRINT(1, ("Mali GP: Core crashed? *IRQ: 0x%x Status: 0x%x\n", irq_readout, core_status ));
 		#ifdef DEBUG
 		MALI_DEBUG_PRINT(1, ("Mali GP: Registers Before reset:\n"));
@@ -1038,6 +1064,11 @@ static _mali_osk_errcode_t subsystem_maligp_get_new_job_from_user(struct mali_co
 	job->abort_id = jobgp->user_input.abort_id;
 
 	jobgp->is_stalled_waiting_for_more_memory = 0;
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+	jobgp->pid = _mali_osk_get_pid();
+	jobgp->tid = _mali_osk_get_tid();
+#endif
 
 	if (NULL != session->job_waiting_to_run)
 	{
@@ -1139,7 +1170,7 @@ static _mali_osk_errcode_t subsystem_maligp_suspend_response(struct mali_core_se
 	that we get the correct cookie */
 	if ( last_gp_core_cookie != (mali_core_renderunit *)suspend_response->cookie )
 	{
-		MALI_PRINT_ERROR( ("Mali GP: Got an illegal cookie from Userspace.\n")) ;
+		MALI_DEBUG_PRINT(2, ("Mali GP: Got an illegal cookie from Userspace.\n")) ;
 		MALI_ERROR(_MALI_OSK_ERR_FAULT);
 	}
 	core = (mali_core_renderunit *)suspend_response->cookie;
@@ -1163,6 +1194,10 @@ static _mali_osk_errcode_t subsystem_maligp_suspend_response(struct mali_core_se
 			mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_PLBU_ALLOC_START_ADDR, suspend_response->arguments[0]);
 			mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_PLBU_ALLOC_END_ADDR, suspend_response->arguments[1]);
 			mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_CMD, MALIGP2_REG_VAL_CMD_UPDATE_PLBU_ALLOC);
+
+#if MALI_TIMELINE_PROFILING_ENABLED
+			_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_RESUME|MALI_PROFILING_MAKE_EVENT_CHANNEL_GP(core->core_number), 0, 0, 0, 0, 0);
+#endif
 
 			MALI_DEBUG_PRINT(4, ("GP resumed with new heap\n"));
 
@@ -1258,15 +1293,22 @@ static void subsystem_maligp_renderunit_reset_core(struct mali_core_renderunit *
 {
 	MALI_DEBUG_PRINT(5, ("Mali GP: renderunit_reset_core\n"));
 
-	if (MALI_CORE_RESET_STYLE_RUNABLE == style)
+	switch (style)
 	{
-		/* normal internal reset */
-		maligp_reset(core);
-	}
-	else
-	{
-		maligp_raw_reset(core); /* do the raw reset */
-		mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_MASK, 0); /* then disable the IRQs */
+		case MALI_CORE_RESET_STYLE_RUNABLE:
+			maligp_reset(core);
+			break;
+		case MALI_CORE_RESET_STYLE_DISABLE:
+			maligp_raw_reset(core); /* do the raw reset */
+			mali_core_renderunit_register_write(core, MALIGP2_REG_ADDR_MGMT_INT_MASK, 0); /* then disable the IRQs */
+			break;
+		case MALI_CORE_RESET_STYLE_HARD:
+			maligp_reset_hard(core);
+			maligp_initialize_registers_mgmt(core);
+			break;
+		default:
+			MALI_DEBUG_PRINT(1, ("Unknown reset type %d\n", style));
+			break;
 	}
 }
 

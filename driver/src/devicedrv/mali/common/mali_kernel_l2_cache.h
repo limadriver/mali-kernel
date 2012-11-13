@@ -18,6 +18,7 @@ extern struct mali_kernel_subsystem mali_subsystem_l2_cache;
 _mali_osk_errcode_t mali_kernel_l2_cache_invalidate_all(void);
 _mali_osk_errcode_t mali_kernel_l2_cache_invalidate_page(u32 page);
 
+void mali_kernel_l2_cache_do_enable(void);
 void mali_kernel_l2_cache_set_perf_counters(u32 src0, u32 src1, int force_reset);
 void mali_kernel_l2_cache_get_perf_counters(u32 *src0, u32 *val0, u32 *src1, u32 *val1);
 

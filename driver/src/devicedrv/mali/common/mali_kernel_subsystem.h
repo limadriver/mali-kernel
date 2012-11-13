@@ -65,7 +65,7 @@ typedef struct mali_kernel_subsystem
 	_mali_osk_errcode_t (*session_begin)(struct mali_session_data * mali_session_data, mali_kernel_subsystem_session_slot * slot, _mali_osk_notification_queue_t * queue);
 	/**
 	 * Informs that a session is ending
-	 * slot was the the same as given during session_begin
+	 * slot was the same as given during session_begin
 	 */
 	void (*session_end)(struct mali_session_data * mali_session_data, mali_kernel_subsystem_session_slot * slot);
 
@@ -85,7 +85,7 @@ _mali_osk_errcode_t _mali_kernel_core_register_resource_handler(_mali_osk_resour
 /* function used to interact with other subsystems */
 /**
  * Broadcast a message
- * Sends a message to all subsystems which has registered a broadcast notification handler
+ * Sends a message to all subsystems which have registered a broadcast notification handler
  * @param message The message to send
  * @param data Message specific extra data
  */

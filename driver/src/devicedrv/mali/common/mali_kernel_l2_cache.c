@@ -211,26 +211,6 @@ static void mali_l2_cache_terminate(mali_kernel_subsystem_identifier id)
 	}
 }
 
-
-
-static _mali_osk_errcode_t mali_l2_cache_load_complete(mali_kernel_subsystem_identifier id)
-{
-	mali_kernel_l2_cache_core * cache, *temp_cache;
-
-	MALI_DEBUG_PRINT(2, ( "Mali L2 cache system load complete\n"));
-
-	/* loop over all L2 cache units and enable them*/
-	_MALI_OSK_LIST_FOREACHENTRY( cache, temp_cache, &caches_head, mali_kernel_l2_cache_core, list)
-	{
-		mali_l2_cache_register_write(cache, MALI400_L2_CACHE_REGISTER_ENABLE, (u32)MALI400_L2_CACHE_ENABLE_ACCESS | (u32)MALI400_L2_CACHE_ENABLE_READ_ALLOCATE);
-	}
-
-	MALI_SUCCESS;
-}
-
-
-
-
 static _mali_osk_errcode_t mali_l2_cache_core_create(_mali_osk_resource_t * resource)
 {
 	_mali_osk_errcode_t err = _MALI_OSK_ERR_FAULT ;
@@ -343,6 +323,26 @@ static u32 mali_l2_cache_register_read(mali_kernel_l2_cache_core * unit, mali_l2
 	return _mali_osk_mem_ioread32(unit->mapped_registers, (u32)reg * sizeof(u32));
 }
 
+void mali_kernel_l2_cache_do_enable(void)
+{
+	mali_kernel_l2_cache_core * cache, *temp_cache;
+
+
+	/* loop over all L2 cache units and enable them*/
+	_MALI_OSK_LIST_FOREACHENTRY( cache, temp_cache, &caches_head, mali_kernel_l2_cache_core, list)
+	{
+		mali_l2_cache_register_write(cache, MALI400_L2_CACHE_REGISTER_ENABLE, (u32)MALI400_L2_CACHE_ENABLE_ACCESS | (u32)MALI400_L2_CACHE_ENABLE_READ_ALLOCATE);
+	}
+}
+
+
+static _mali_osk_errcode_t mali_l2_cache_load_complete(mali_kernel_subsystem_identifier id)
+{
+	mali_kernel_l2_cache_do_enable();
+	MALI_DEBUG_PRINT(2, ( "Mali L2 cache system load complete\n"));
+
+	MALI_SUCCESS;
+}
 
 static _mali_osk_errcode_t mali_kernel_l2_cache_send_command(mali_kernel_l2_cache_core *cache, u32 reg, u32 val)
 {
@@ -400,7 +400,6 @@ _mali_osk_errcode_t mali_kernel_l2_cache_invalidate_all(void)
 }
 
 
-
 static _mali_osk_errcode_t mali_kernel_l2_cache_invalidate_page_cache(mali_kernel_l2_cache_core *cache, u32 page)
 {
 	return mali_kernel_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_CLEAR_PAGE, page);
@@ -426,8 +425,10 @@ void mali_kernel_l2_cache_set_perf_counters(u32 src0, u32 src1, int force_reset)
 	mali_kernel_l2_cache_core * cache, *temp_cache;
 	int reset0 = force_reset;
 	int reset1 = force_reset;
-	int changed0 = 0;
-	int changed1 = 0;
+	MALI_DEBUG_CODE(
+		int changed0 = 0;
+		int changed1 = 0;
+	)
 
 	/* loop over all L2 cache units and activate the counters on them */
 	_MALI_OSK_LIST_FOREACHENTRY(cache, temp_cache, &caches_head, mali_kernel_l2_cache_core, list)
@@ -438,14 +439,14 @@ void mali_kernel_l2_cache_set_perf_counters(u32 src0, u32 src1, int force_reset)
 		if (src0 != cur_src0)
 		{
 			mali_l2_cache_register_write(cache, MALI400_L2_CACHE_REGISTER_PERFCNT_SRC0, src0);
-			changed0 = 1;
+			MALI_DEBUG_CODE(changed0 = 1;)
 			reset0 = 1;
 		}
 
 		if (src1 != cur_src1)
 		{
 			mali_l2_cache_register_write(cache, MALI400_L2_CACHE_REGISTER_PERFCNT_SRC1, src1);
-			changed1 = 1;
+			MALI_DEBUG_CODE(changed1 = 1;)
 			reset1 = 1;
 		}
 

@@ -41,7 +41,7 @@ int gp_start_job_wrapper(struct mali_session_data *session_data, _mali_uk_gp_sta
 		/*
 		 * If this happens, then user space will not know that the job was actually started,
 		 * and if we return a queued job, then user space will still think that one is still queued.
-		 * This will typically lead to a dead lock in user space.
+		 * This will typically lead to a deadlock in user space.
 		 * This could however only happen if user space deliberately passes a user buffer which
 		 * passes the access_ok(VERIFY_WRITE) check, but isn't fully writable at the time of copy_to_user().
 		 * The official Mali driver will never attempt to do that, and kernel space should not be affected.

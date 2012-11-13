@@ -36,3 +36,15 @@ _mali_osk_errcode_t mali_platform_powerup(u32 cores)
 {
     MALI_SUCCESS;
 }
+
+void mali_gpu_utilization_handler(u32 utilization)
+{
+}
+
+#if MALI_POWER_MGMT_TEST_SUITE
+u32 pmu_get_power_up_down_info(void)
+{
+	return 4095;
+
+}
+#endif

@@ -13,7 +13,7 @@
 
 /* Make sure debug is defined when it should be */
 #ifndef DEBUG
-	#if !defined(NDEBUG) || defined(_DEBUG)
+	#if defined(_DEBUG)
 		#define DEBUG
 	#endif
 #endif

@@ -70,10 +70,11 @@ int ump_descriptor_mapping_allocate_mapping(ump_descriptor_mapping * map, void *
  	descriptor = _mali_osk_find_first_zero_bit(map->table->usage, map->current_nr_mappings);
 	if (descriptor == map->current_nr_mappings)
 	{
+		int nr_mappings_new;
 		/* no free descriptor, try to expand the table */
 		ump_descriptor_table * new_table;
 		ump_descriptor_table * old_table = map->table;
-		int nr_mappings_new = map->current_nr_mappings + BITS_PER_LONG;
+		nr_mappings_new= map->current_nr_mappings *2;
 
 		if (map->current_nr_mappings >= map->max_nr_mappings_allowed)
 		{

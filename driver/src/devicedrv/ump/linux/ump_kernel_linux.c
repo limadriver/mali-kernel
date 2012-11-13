@@ -12,6 +12,7 @@
 #include <linux/fs.h>                /* file system operations */
 #include <linux/cdev.h>              /* character device definitions */
 #include <linux/ioport.h>            /* request_mem_region */
+#include <linux/mm.h>                /* memory management functions and types */
 #include <asm/uaccess.h>             /* user space access */
 #include <asm/atomic.h>
 #include <linux/device.h>
@@ -31,6 +32,7 @@
 #include "ump_uk_types.h"
 #include "ump_ukk_wrappers.h"
 #include "ump_ukk_ref_wrappers.h"
+
 
 /* Module parameter to control log level */
 int ump_debug_level = 2;
@@ -73,7 +75,11 @@ static struct ump_device ump_device;
 /* Forward declare static functions */
 static int ump_file_open(struct inode *inode, struct file *filp);
 static int ump_file_release(struct inode *inode, struct file *filp);
+#ifdef HAVE_UNLOCKED_IOCTL
+static long ump_file_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+#else
 static int ump_file_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg);
+#endif
 static int ump_file_mmap(struct file * filp, struct vm_area_struct * vma);
 
 
@@ -83,7 +89,11 @@ static struct file_operations ump_fops =
 	.owner   = THIS_MODULE,
 	.open    = ump_file_open,
 	.release = ump_file_release,
+#ifdef HAVE_UNLOCKED_IOCTL
+	.unlocked_ioctl   = ump_file_ioctl,
+#else
 	.ioctl   = ump_file_ioctl,
+#endif
 	.mmap    = ump_file_mmap
 };
 
@@ -260,13 +270,19 @@ static int ump_file_release(struct inode *inode, struct file *filp)
 /*
  * Handle IOCTL requests.
  */
+#ifdef HAVE_UNLOCKED_IOCTL
+static long ump_file_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+#else
 static int ump_file_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
+#endif
 {
 	int err = -ENOTTY;
 	void __user * argument;
 	struct ump_session_data * session_data;
 
+#ifndef HAVE_UNLOCKED_IOCTL
 	(void)inode; /* inode not used */
+#endif
 
 	session_data = (struct ump_session_data *)filp->private_data;
 	if (NULL == session_data)
@@ -295,6 +311,11 @@ static int ump_file_ioctl(struct inode *inode, struct file *filp, unsigned int c
 		case UMP_IOC_SIZE_GET:
 			err = ump_size_get_wrapper((u32 __user *)argument, session_data);
 			break;
+
+		case UMP_IOC_MSYNC:
+			err = ump_msync_wrapper((u32 __user *)argument, session_data);
+			break;
+
 		default:
 			DBG_MSG(1, ("No handler for IOCTL. cmd: 0x%08x, arg: 0x%08lx\n", cmd, arg));
 			err = -EFAULT;
@@ -343,6 +364,16 @@ static int ump_file_mmap(struct file * filp, struct vm_area_struct * vma)
 	args.size = vma->vm_end - vma->vm_start;
 	args._ukk_private = vma;
 	args.secure_id = vma->vm_pgoff;
+	args.is_cached = 0;
+
+	if (!(vma->vm_flags & VM_SHARED))
+	{
+		args.is_cached = 1;
+		vma->vm_flags = vma->vm_flags | VM_SHARED | VM_MAYSHARE  ;
+		DBG_MSG(3, ("UMP Map function: Forcing the CPU to use cache\n"));
+	}
+
+	DBG_MSG(4, ("UMP vma->flags: %x\n", vma->vm_flags ));
 
 	/* Call the common mmap handler */
 	err = _ump_ukk_map_mem( &args );
