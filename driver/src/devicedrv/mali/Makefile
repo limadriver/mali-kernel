@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2010 ARM Limited. All rights reserved.
+# Copyright (C) 2010-2011 ARM Limited. All rights reserved.
 # 
 # This program is free software and is provided to you under the terms of the GNU General Public License version 2
 # as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -35,6 +35,7 @@ USING_MALI_PMM_TESTSUITE ?= 0
 USING_PROFILING ?= 0
 TIMESTAMP ?= default
 BUILD ?= debug
+TARGET_PLATFORM ?= default
 
 ifeq ($(USING_UMP),1)
 	UMP_SYMVERS_FILE = ../ump/Module.symvers
@@ -64,12 +65,9 @@ DEFINES += -DMALI_PMM_RUNTIME_JOB_CONTROL_ON=$(USING_MALI_RUN_TIME_PM)
 
 ifneq ($(call submodule_enabled, $M, PMU),0)
         MALI_PLATFORM_FILE = platform/mali400-pmu/mali_platform.c
+else
+        MALI_PLATFORM_FILE = platform/$(TARGET_PLATFORM)/mali_platform.c
 endif
-
-ifeq ($(USING_MALI_RUN_TIME_PM),1)
-	MALI_PLATFORM_FILE = platform/mali-runtimepm/mali_platform.c
-endif
-
 
 DEFINES += -DUSING_MALI_PMM=$(USING_PMM)
 DEFINES += -DMALI_GPU_UTILIZATION=$(USING_GPU_UTILIZATION)
