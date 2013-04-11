@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -89,6 +89,7 @@ typedef enum
     _MALI_UK_MAP_EXT_MEM,                    /**< _mali_uku_map_external_mem() */
     _MALI_UK_UNMAP_EXT_MEM,                  /**< _mali_uku_unmap_external_mem() */
     _MALI_UK_VA_TO_MALI_PA,                  /**< _mali_uku_va_to_mali_pa() */
+    _MALI_UK_MEM_WRITE_SAFE,                 /**< _mali_uku_mem_write_safe() */
 
     /** Common functions for each core */
 
@@ -491,6 +492,8 @@ typedef struct
 	u32 flags;                          /**< [in] See _MALI_PP_JOB_FLAG_* for a list of avaiable flags */
 	s32 fence;                          /**< [in,out] Fence to wait on / fence that will be signalled on job completion, if _MALI_PP_JOB_FLAG_FENCE is set */
 	s32 stream;                         /**< [in] Steam identifier */
+	u32 num_memory_cookies;             /**< [in] number of memory cookies attached to job */
+	u32 *memory_cookies;                /**< [in] memory cookies attached to job  */
 } _mali_uk_pp_start_job_s;
 /** @} */ /* end group _mali_uk_ppstartjob_s */
 
@@ -708,7 +711,7 @@ typedef struct
  * The 16bit integer is stored twice in a 32bit integer
  * For example, for version 1 the value would be 0x00010001
  */
-#define _MALI_API_VERSION 19
+#define _MALI_API_VERSION 20
 #define _MALI_UK_API_VERSION _MAKE_VERSION_ID(_MALI_API_VERSION)
 
 /**
@@ -877,6 +880,16 @@ typedef struct
 	u32 size;                       /**< [in,out] Size of the range, in bytes. */
 } _mali_uk_va_to_mali_pa_s;
 
+/**
+ * @brief Arguments for _mali_uk[uk]_mem_write_safe()
+ */
+typedef struct
+{
+	void *ctx;        /**< [in,out] user-kernel context (trashed on output) */
+	const void *src;  /**< [in]     Pointer to source data */
+	void *dest;       /**< [in]     Destination Mali buffer */
+	u32 size;         /**< [in,out] Number of bytes to write/copy on input, number of bytes actually written/copied on output */
+} _mali_uk_mem_write_safe_s;
 
 typedef struct
 {

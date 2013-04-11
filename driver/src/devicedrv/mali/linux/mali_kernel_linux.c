@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -60,16 +60,16 @@ extern int mali_l2_max_reads;
 module_param(mali_l2_max_reads, int, S_IRUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mali_l2_max_reads, "Maximum reads for Mali L2 cache");
 
-extern int mali_dedicated_mem_start;
-module_param(mali_dedicated_mem_start, int, S_IRUSR | S_IRGRP | S_IROTH);
+extern unsigned int mali_dedicated_mem_start;
+module_param(mali_dedicated_mem_start, uint, S_IRUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mali_dedicated_mem_start, "Physical start address of dedicated Mali GPU memory.");
 
-extern int mali_dedicated_mem_size;
-module_param(mali_dedicated_mem_size, int, S_IRUSR | S_IRGRP | S_IROTH);
+extern unsigned int mali_dedicated_mem_size;
+module_param(mali_dedicated_mem_size, uint, S_IRUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mali_dedicated_mem_size, "Size of dedicated Mali GPU memory.");
 
-extern int mali_shared_mem_size;
-module_param(mali_shared_mem_size, int, S_IRUSR | S_IRGRP | S_IROTH);
+extern unsigned int mali_shared_mem_size;
+module_param(mali_shared_mem_size, uint, S_IRUSR | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mali_shared_mem_size, "Size of shared Mali GPU memory.");
 
 #if defined(CONFIG_MALI400_PROFILING)
@@ -579,6 +579,10 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
 
 		case MALI_IOC_MEM_TERM:
 			err = mem_term_wrapper(session_data, (_mali_uk_term_mem_s __user *)arg);
+			break;
+
+		case MALI_IOC_MEM_WRITE_SAFE:
+			err = mem_write_safe_wrapper(session_data, (_mali_uk_mem_write_safe_s __user *)arg);
 			break;
 
 		case MALI_IOC_MEM_MAP_EXT:

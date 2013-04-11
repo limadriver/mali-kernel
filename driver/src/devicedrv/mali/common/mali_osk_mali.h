@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -233,6 +233,16 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_map( mali_memory_allocation * descri
  * \ref _MALI_OSK_MEM_MAPREGION_FLAG_OS_ALLOCATED_PHYSADDR set.
  */
 void _mali_osk_mem_mapregion_unmap( mali_memory_allocation * descriptor, u32 offset, u32 size, _mali_osk_mem_mapregion_flags_t flags );
+
+/** @brief Copy as much data as possible from src to dest, do not crash if src or dest isn't available.
+ *
+ * @param dest Destination buffer (limited to user space mapped Mali memory)
+ * @param src Source buffer
+ * @param size Number of bytes to copy
+ * @return Number of bytes actually copied
+ */
+u32 _mali_osk_mem_write_safe(void *dest, const void *src, u32 size);
+
 /** @} */ /* end group _mali_osk_low_level_memory */
 
 

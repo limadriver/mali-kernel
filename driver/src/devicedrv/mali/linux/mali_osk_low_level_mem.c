@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -25,6 +25,9 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,1,0)
 #include <linux/shrinker.h>
 #endif
+#include <linux/sched.h>
+#include <linux/mm_types.h>
+#include <linux/rwsem.h>
 
 #include "mali_osk.h"
 #include "mali_ukk.h" /* required to hook in _mali_ukk_mem_mmap handling */
@@ -280,6 +283,8 @@ static unsigned long mali_kernel_memory_cpu_page_fault_handler(struct vm_area_st
 	MALI_DEBUG_PRINT(1, ("Page-fault in Mali memory region caused by the CPU.\n"));
 	MALI_DEBUG_PRINT(1, ("Tried to access %p (process local virtual address) which is not currently mapped to any Mali memory.\n", (void*)address));
 
+	MALI_IGNORE(address);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
 	return VM_FAULT_SIGBUS;
 #else
@@ -363,7 +368,7 @@ mali_io_address _mali_osk_mem_allocioregion( u32 *phys, u32 size )
 	/* dma_alloc_* uses a limited region of address space. On most arch/marchs
 	 * 2 to 14 MiB is available. This should be enough for the page tables, which
 	 * currently is the only user of this function. */
-	virt = dma_alloc_coherent(NULL, size, phys, GFP_KERNEL | GFP_DMA );
+	virt = dma_alloc_writecombine(NULL, size, phys, GFP_KERNEL | GFP_DMA | __GFP_ZERO);
 
 	MALI_DEBUG_PRINT(3, ("Page table virt: 0x%x = dma_alloc_coherent(size:%d, phys:0x%x, )\n", virt, size, phys));
 
@@ -384,7 +389,7 @@ void _mali_osk_mem_freeioregion( u32 phys, u32 size, mali_io_address virt )
  	MALI_DEBUG_ASSERT( 0 != size );
  	MALI_DEBUG_ASSERT( 0 == (phys & ( (1 << PAGE_SHIFT) - 1 )) );
 
-	dma_free_coherent(NULL, size, virt, phys);
+	dma_free_writecombine(NULL, size, virt, phys);
 }
 
 _mali_osk_errcode_t inline _mali_osk_mem_reqregion( u32 phys, u32 size, const char *description )
@@ -469,8 +474,14 @@ _mali_osk_errcode_t _mali_osk_mem_mapregion_init( mali_memory_allocation * descr
 	  The memory is reserved, meaning that it's present and can never be paged out (see also previous entry)
 	*/
 	vma->vm_flags |= VM_IO;
-	vma->vm_flags |= VM_RESERVED;
 	vma->vm_flags |= VM_DONTCOPY;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
+	vma->vm_flags |= VM_RESERVED;
+#else
+	vma->vm_flags |= VM_DONTDUMP;
+	vma->vm_flags |= VM_DONTEXPAND;
+	vma->vm_flags |= VM_PFNMAP;
+#endif
 
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 	vma->vm_ops = &mali_kernel_vm_ops; /* Operations used on any memory system */
@@ -662,4 +673,51 @@ void _mali_osk_mem_mapregion_unmap( mali_memory_allocation * descriptor, u32 off
 	/* Linux does the right thing as part of munmap to remove the mapping */
 
 	return;
+}
+
+u32 _mali_osk_mem_write_safe(void *dest, const void *src, u32 size)
+{
+#define MALI_MEM_SAFE_COPY_BLOCK_SIZE 4096
+	u32 retval = 0;
+	void *temp_buf;
+
+	temp_buf = kmalloc(MALI_MEM_SAFE_COPY_BLOCK_SIZE, GFP_KERNEL);
+	if (NULL != temp_buf)
+	{
+		u32 bytes_left_to_copy = size;
+		u32 i;
+		for (i = 0; i < size; i += MALI_MEM_SAFE_COPY_BLOCK_SIZE)
+		{
+			u32 size_to_copy;
+			u32 size_copied;
+			u32 bytes_left;
+
+			if (bytes_left_to_copy > MALI_MEM_SAFE_COPY_BLOCK_SIZE)
+			{
+				size_to_copy = MALI_MEM_SAFE_COPY_BLOCK_SIZE;
+			}
+			else
+			{
+				size_to_copy = bytes_left_to_copy;
+			}
+
+			bytes_left = copy_from_user(temp_buf, ((char*)src) + i, size_to_copy);
+			size_copied = size_to_copy - bytes_left;
+
+			bytes_left = copy_to_user(((char*)dest) + i, temp_buf, size_copied);
+			size_copied -= bytes_left;
+
+			bytes_left_to_copy -= size_copied;
+			retval += size_copied;
+
+			if (size_copied != size_to_copy)
+			{
+				break; /* Early out, we was not able to copy this entire block */
+			}
+		}
+
+		kfree(temp_buf);
+	}
+
+	return retval;
 }

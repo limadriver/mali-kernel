@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2012-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -19,6 +19,12 @@
 #include "mali_group.h"
 #include "mali_pm.h"
 
+#if defined(CONFIG_DMA_SHARED_BUFFER)
+#include "mali_dma_buf.h"
+#endif
+
+/* With certain configurations, job deletion involves functions which cannot be called from atomic context.
+ * This #if checks for those cases and enables job deletion to be deferred and run in a different context. */
 #if defined(CONFIG_SYNC)
 #define MALI_PP_SCHEDULER_USE_DEFERRED_JOB_DELETE 1
 #endif
@@ -524,7 +530,7 @@ static void mali_pp_scheduler_schedule(void)
 
 		mali_group_unlock(group);
 
-		/* @@@@ todo: remove the return value from mali_group_start_xx_job, since we can't fail on Mali-300++ */
+		/* remove the return value from mali_group_start_xx_job, since we can't fail on Mali-300++ */
 	}
 }
 
@@ -533,7 +539,7 @@ static void mali_pp_scheduler_return_job_to_user(struct mali_pp_job *job, mali_b
 	if (MALI_FALSE == mali_pp_job_use_no_notification(job))
 	{
 		u32 i;
-		u32 sub_jobs = mali_pp_job_get_sub_job_count(job);
+		u32 num_counters_to_copy;
 		mali_bool success = mali_pp_job_was_success(job);
 
 		_mali_uk_pp_job_finished_s *jobres = job->finished_notification->result_buffer;
@@ -548,7 +554,16 @@ static void mali_pp_scheduler_return_job_to_user(struct mali_pp_job *job, mali_b
 			jobres->status = _MALI_UK_JOB_STATUS_END_UNKNOWN_ERR;
 		}
 
-		for (i = 0; i < sub_jobs; i++)
+		if (mali_pp_job_is_virtual(job))
+		{
+			num_counters_to_copy = num_cores; /* Number of physical cores available */
+		}
+		else
+		{
+			num_counters_to_copy = mali_pp_job_get_sub_job_count(job);
+		}
+
+		for (i = 0; i < num_counters_to_copy; i++)
 		{
 			jobres->perf_counter0[i] = mali_pp_job_get_perf_counter_value0(job, i);
 			jobres->perf_counter1[i] = mali_pp_job_get_perf_counter_value1(job, i);
@@ -642,7 +657,6 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 		/* Remove job from session list */
 		_mali_osk_list_del(&job->session_list);
 
-		/* Send notification back to user space */
 		MALI_DEBUG_PRINT(4, ("Mali PP scheduler: All parts completed for %s job %u (0x%08X)\n",
 		                     mali_pp_job_is_virtual(job) ? "virtual" : "physical",
 		                     mali_pp_job_get_id(job), job));
@@ -659,6 +673,16 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 		}
 #endif
 
+#if defined(CONFIG_DMA_SHARED_BUFFER) && !defined(CONFIG_MALI_DMA_BUF_MAP_ON_ATTACH)
+		/* Unmap buffers attached to job */
+		if (0 < job->num_dma_bufs)
+		{
+			mali_dma_buf_unmap_job(job);
+		}
+#endif /* CONFIG_DMA_SHARED_BUFFER */
+
+
+		/* Send notification back to user space */
 #if defined(MALI_PP_SCHEDULER_USE_DEFERRED_JOB_DELETE)
 		mali_pp_scheduler_return_job_to_user(job, MALI_TRUE);
 #else
@@ -695,8 +719,6 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 	{
 		/* A barrier was resolved, so schedule previously blocked jobs */
 		_mali_osk_wq_schedule_work(pp_scheduler_wq_schedule);
-
-		/* TODO: Subjob optimisation */
 	}
 
 	/* Recycle variables */
@@ -788,7 +810,7 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 			}
 			else
 			{
-				/* @@@@ todo: this cant fail on Mali-300+, no need to implement put back of job */
+				/* this cant fail on Mali-300+, no need to implement put back of job */
 				MALI_DEBUG_ASSERT(0);
 			}
 
@@ -828,7 +850,7 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 		else if (NULL != virtual_group)
 		{
 			/* Rejoin virtual group */
-			/* TODO: In the future, a policy check might be useful here */
+			/* In the future, a policy check might be useful here */
 
 			/* We're no longer needed on the scheduler list */
 			_mali_osk_list_delinit(&(group->pp_scheduler_list));
@@ -841,12 +863,10 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 			mali_group_unlock(group);
 
 			mali_group_lock(virtual_group);
-			/* TODO: Take group lock also? */
 			mali_group_add_group(virtual_group, group);
 			mali_group_unlock(virtual_group);
 
 			/* We need to return from this function with the group lock held */
-			/* TODO: optimise! */
 			mali_group_lock(group);
 		}
 		else
@@ -885,6 +905,14 @@ void mali_pp_scheduler_resume(void)
 MALI_STATIC_INLINE void mali_pp_scheduler_queue_job(struct mali_pp_job *job, struct mali_session_data *session)
 {
 	MALI_DEBUG_ASSERT_POINTER(job);
+
+#if defined(CONFIG_DMA_SHARED_BUFFER) && !defined(CONFIG_MALI_DMA_BUF_MAP_ON_ATTACH)
+	/* Map buffers attached to job */
+	if (0 != job->num_memory_cookies)
+	{
+		mali_dma_buf_map_job(job);
+	}
+#endif /* CONFIG_DMA_SHARED_BUFFER */
 
 	mali_pm_core_event(MALI_CORE_EVENT_PP_START);
 
@@ -1038,7 +1066,7 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx, _mali_uk_pp_start_job_s *u
 		int pre_fence_fd = job->uargs.fence;
 		int err;
 
-		MALI_DEBUG_PRINT(2, ("Sync: Job %d waiting for fence %d\n", mali_pp_job_get_id(job), pre_fence_fd));
+		MALI_DEBUG_PRINT(3, ("Sync: Job %d waiting for fence %d\n", mali_pp_job_get_id(job), pre_fence_fd));
 
 		job->pre_fence = sync_fence_fdget(pre_fence_fd); /* Reference will be released when job is deleted. */
 		if (NULL == job->pre_fence)

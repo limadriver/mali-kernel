@@ -167,16 +167,16 @@ _mali_osk_errcode_t mali_dlbu_reset(struct mali_dlbu_core *dlbu)
 void mali_dlbu_add_group(struct mali_dlbu_core *dlbu, struct mali_group *group)
 {
 	struct mali_pp_core *pp_core;
-	u32 core_id;
+	u32 bcast_id;
 
 	MALI_DEBUG_ASSERT_POINTER( dlbu );
 	MALI_DEBUG_ASSERT_POINTER( group );
 
 	pp_core = mali_group_get_pp_core(group);
-	core_id = mali_pp_core_get_id(pp_core);
+	bcast_id = mali_pp_core_get_bcast_id(pp_core);
 
-	dlbu->pp_cores_mask |= (0x1 << core_id);
-	MALI_DEBUG_PRINT(3, ("Mali DLBU: Adding core[%d] New mask= 0x%02x\n",core_id , dlbu->pp_cores_mask));
+	dlbu->pp_cores_mask |= bcast_id;
+	MALI_DEBUG_PRINT(3, ("Mali DLBU: Adding core[%d] New mask= 0x%02x\n", bcast_id , dlbu->pp_cores_mask));
 
 	mali_hw_core_register_write(&dlbu->hw_core, MALI_DLBU_REGISTER_PP_ENABLE_MASK, dlbu->pp_cores_mask);
 }
@@ -185,16 +185,16 @@ void mali_dlbu_add_group(struct mali_dlbu_core *dlbu, struct mali_group *group)
 void mali_dlbu_remove_group(struct mali_dlbu_core *dlbu, struct mali_group *group)
 {
 	struct mali_pp_core *pp_core;
-	u32 core_id;
+	u32 bcast_id;
 
 	MALI_DEBUG_ASSERT_POINTER( dlbu );
 	MALI_DEBUG_ASSERT_POINTER( group );
 
 	pp_core = mali_group_get_pp_core(group);
-	core_id = mali_pp_core_get_id(pp_core);
+	bcast_id = mali_pp_core_get_bcast_id(pp_core);
 
-	dlbu->pp_cores_mask &= ~(0x1 << core_id);
-		MALI_DEBUG_PRINT(3, ("Mali DLBU: Removing core[%d] New mask= 0x%02x\n", core_id, dlbu->pp_cores_mask));
+	dlbu->pp_cores_mask &= ~bcast_id;
+		MALI_DEBUG_PRINT(3, ("Mali DLBU: Removing core[%d] New mask= 0x%02x\n", bcast_id, dlbu->pp_cores_mask));
 
 	mali_hw_core_register_write(&dlbu->hw_core, MALI_DLBU_REGISTER_PP_ENABLE_MASK, dlbu->pp_cores_mask);
 }

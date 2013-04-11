@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -39,9 +39,9 @@
 
 
 /* Mali GPU memory. Real values come from module parameter or from device specific data */
-int mali_dedicated_mem_start = 0;
-int mali_dedicated_mem_size = 0;
-int mali_shared_mem_size = 0;
+unsigned int mali_dedicated_mem_start = 0;
+unsigned int mali_dedicated_mem_size = 0;
+unsigned int mali_shared_mem_size = 0;
 
 /* Frame buffer memory to be accessible by Mali GPU */
 int mali_fb_start = 0;
@@ -67,6 +67,46 @@ static u32 global_gpu_minor_version = 0;
 /* timer related */
 int mali_max_job_runtime = WATCHDOG_MSECS_DEFAULT;
 
+static _mali_osk_errcode_t mali_set_global_gpu_base_address(void)
+{
+	global_gpu_base_address = _mali_osk_resource_base_address();
+	if (0 == global_gpu_base_address)
+	{
+		return _MALI_OSK_ERR_ITEM_NOT_FOUND;
+	}
+
+	return _MALI_OSK_ERR_OK;
+}
+
+static u32 mali_get_bcast_id(_mali_osk_resource_t *resource_pp)
+{
+	switch (resource_pp->base - global_gpu_base_address)
+	{
+	case 0x08000:
+	case 0x20000: /* fall-through for aliased mapping */
+		return 0x01;
+	case 0x0A000:
+	case 0x22000: /* fall-through for aliased mapping */
+		return 0x02;
+	case 0x0C000:
+	case 0x24000: /* fall-through for aliased mapping */
+		return 0x04;
+	case 0x0E000:
+	case 0x26000: /* fall-through for aliased mapping */
+		return 0x08;
+	case 0x28000:
+		return 0x10;
+	case 0x2A000:
+		return 0x20;
+	case 0x2C000:
+		return 0x40;
+	case 0x2E000:
+		return 0x80;
+	default:
+		return 0;
+	}
+}
+
 static _mali_osk_errcode_t mali_parse_product_info(void)
 {
 	/*
@@ -76,12 +116,6 @@ static _mali_osk_errcode_t mali_parse_product_info(void)
 
 	u32 first_pp_offset;
 	_mali_osk_resource_t first_pp_resource;
-
-	global_gpu_base_address = _mali_osk_resource_base_address();
-	if (0 == global_gpu_base_address)
-	{
-		return _MALI_OSK_ERR_ITEM_NOT_FOUND;
-	}
 
 	/* Find out where the first PP core is located */
 	if (_MALI_OSK_ERR_OK == _mali_osk_resource_find(global_gpu_base_address + 0x8000, NULL))
@@ -102,7 +136,7 @@ static _mali_osk_errcode_t mali_parse_product_info(void)
 		struct mali_group *group = mali_group_create(NULL, NULL, NULL);
 		if (NULL != group)
 		{
-			struct mali_pp_core *pp_core = mali_pp_create(&first_pp_resource, group, MALI_FALSE);
+			struct mali_pp_core *pp_core = mali_pp_create(&first_pp_resource, group, MALI_FALSE, mali_get_bcast_id(&first_pp_resource));
 			if (NULL != pp_core)
 			{
 				u32 pp_version = mali_pp_core_get_version(pp_core);
@@ -363,7 +397,7 @@ static _mali_osk_errcode_t mali_create_group(struct mali_l2_cache_core *cache,
 		struct mali_pp_core *pp_core;
 
 		/* Create the PP core object inside this group */
-		pp_core = mali_pp_create(resource_pp, group, MALI_FALSE);
+		pp_core = mali_pp_create(resource_pp, group, MALI_FALSE, mali_get_bcast_id(resource_pp));
 		if (NULL == pp_core)
 		{
 			/* No need to clean up now, as we will clean up everything linked in from the cluster when we fail this function */
@@ -429,7 +463,7 @@ static _mali_osk_errcode_t mali_create_virtual_group(_mali_osk_resource_t *resou
 	}
 
 	/* Create the PP core object inside this group */
-	pp_bcast_core = mali_pp_create(resource_pp_bcast, group, MALI_TRUE);
+	pp_bcast_core = mali_pp_create(resource_pp_bcast, group, MALI_TRUE, 0);
 	if (NULL == pp_bcast_core)
 	{
 		/* No need to clean up now, as we will clean up everything linked in from the cluster when we fail this function */
@@ -628,6 +662,8 @@ static _mali_osk_errcode_t mali_parse_config_pmu(void)
 {
 	_mali_osk_resource_t resource_pmu;
 
+	MALI_DEBUG_ASSERT(0 != global_gpu_base_address);
+
 	if (_MALI_OSK_ERR_OK == _mali_osk_resource_find(global_gpu_base_address + 0x02000, &resource_pmu))
 	{
 		u32 number_of_pp_cores = 0;
@@ -637,6 +673,7 @@ static _mali_osk_errcode_t mali_parse_config_pmu(void)
 
 		if (NULL == mali_pmu_create(&resource_pmu, number_of_pp_cores, number_of_l2_caches))
 		{
+			MALI_PRINT_ERROR(("Failed to create PMU\n"));
 			return _MALI_OSK_ERR_FAULT;
 		}
 	}
@@ -748,7 +785,7 @@ _mali_osk_errcode_t mali_initialize_subsystems(void)
 	err = _mali_osk_profiling_init(mali_boot_profiling ? MALI_TRUE : MALI_FALSE);
 	if (_MALI_OSK_ERR_OK != err)
 	{
-		/* No biggie if we wheren't able to initialize the profiling */
+		/* No biggie if we weren't able to initialize the profiling */
 		MALI_PRINT_ERROR(("Failed to initialize profiling, feature will be unavailable\n"));
 	}
 #endif
@@ -759,6 +796,9 @@ _mali_osk_errcode_t mali_initialize_subsystems(void)
 	/* Configure memory early. Memory allocation needed for mali_mmu_initialize. */
 	err = mali_parse_config_memory();
 	if (_MALI_OSK_ERR_OK != err) goto parse_memory_config_failed;
+
+	err = mali_set_global_gpu_base_address();
+	if (_MALI_OSK_ERR_OK != err) goto set_global_gpu_base_address_failed;
 
 	/* Initialize the MALI PMU */
 	err = mali_parse_config_pmu();
@@ -841,7 +881,9 @@ pm_init_failed:
 		}
 	}
 parse_pmu_config_failed:
-	/* undoing mali_parse_config_memory() is done by mali_memory_terminate() */
+	/* undoing mali_parse_config_pmu() is done by mali_memory_terminate() */
+set_global_gpu_base_address_failed:
+	global_gpu_base_address = 0;
 parse_memory_config_failed:
 	mali_memory_terminate();
 memory_init_failed:

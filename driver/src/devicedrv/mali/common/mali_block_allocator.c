@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -318,6 +318,8 @@ static mali_physical_memory_allocation_result block_allocator_allocate_page_tabl
 			info->first_free = alloc->next;
 
 			alloc->next = NULL; /* Could potentially link many blocks together instead */
+
+			_mali_osk_memset(block->mapping, 0, size);
 
 			result = MALI_MEM_ALLOC_FINISHED;
 		}

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2013 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -503,8 +503,6 @@ void _ump_ukk_lock(_ump_uk_lock_s *args )
 
 	mem->lock_usage = (ump_lock_usage) args->lock_usage;
 
-	/** TODO: TAKE LOCK HERE */
-
 	ump_dd_reference_release(mem);
 }
 
@@ -527,8 +525,6 @@ void _ump_ukk_unlock(_ump_uk_unlock_s *args )
 	DBG_MSG(1, ("UMP[%02u] Unlocking. Old Lock flag:\n", (u32)args->secure_id, (u32) mem->lock_usage ));
 
 	mem->lock_usage = (ump_lock_usage) UMP_NOT_LOCKED;
-
-	/** TODO: RELEASE LOCK HERE */
 
 	ump_dd_reference_release(mem);
 }
