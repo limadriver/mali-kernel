@@ -24,11 +24,15 @@
 #include <linux/mali/mali_utgard.h>
 #include "mali_kernel_common.h"
 
+#include "arm_core_scaling.h"
+
 static void mali_platform_device_release(struct device *device);
 static u32 mali_read_phys(u32 phys_addr);
 #if defined(CONFIG_ARCH_REALVIEW)
 static void mali_write_phys(u32 phys_addr, u32 value);
 #endif
+
+void mali_gpu_utilization_callback(struct mali_gpu_utilization_data *data);
 
 #if defined(CONFIG_ARCH_VEXPRESS)
 
@@ -38,11 +42,6 @@ static struct resource mali_gpu_resources_m450_mp8[] =
 };
 
 #elif defined(CONFIG_ARCH_REALVIEW)
-
-static struct resource mali_gpu_resources_m200[] =
-{
-	MALI_GPU_RESOURCES_MALI200(0xC0000000, -1, -1, -1)
-};
 
 static struct resource mali_gpu_resources_m300[] =
 {
@@ -78,11 +77,15 @@ static struct mali_gpu_device_data mali_gpu_data =
 #endif
 	.fb_start = 0xe0000000,
 	.fb_size = 0x01000000,
+	.utilization_interval = 1000, /* 1000ms */
+	.utilization_callback = mali_gpu_utilization_callback,
+	.pmu_switch_delay = 0xFF, /* do not have to be this high on FPGA, but it is good for testing to have a delay */
 };
 
 int mali_platform_device_register(void)
 {
 	int err = -1;
+	int num_pp_cores = 0;
 #if defined(CONFIG_ARCH_REALVIEW)
 	u32 m400_gp_version;
 #endif
@@ -95,21 +98,17 @@ int mali_platform_device_register(void)
 	if (mali_read_phys(0xFC020000) == 0x00010100)
 	{
 		MALI_DEBUG_PRINT(4, ("Registering Mali-450 MP8 device\n"));
+		num_pp_cores = 8;
 		err = platform_device_add_resources(&mali_gpu_device, mali_gpu_resources_m450_mp8, sizeof(mali_gpu_resources_m450_mp8) / sizeof(mali_gpu_resources_m450_mp8[0]));
 	}
 
 #elif defined(CONFIG_ARCH_REALVIEW)
 
 	m400_gp_version = mali_read_phys(0xC000006C);
-	if (m400_gp_version == 0x00000000 && (mali_read_phys(0xC000206c) & 0xFFFF0000) == 0x0A070000)
-	{
-		MALI_DEBUG_PRINT(4, ("Registering Mali-200 device\n"));
-		err = platform_device_add_resources(&mali_gpu_device, mali_gpu_resources_m200, sizeof(mali_gpu_resources_m200) / sizeof(mali_gpu_resources_m200[0]));
-		mali_write_phys(0xC0010020, 0xA); /* Enable direct memory mapping for FPGA */
-	}
-	else if ((m400_gp_version & 0xFFFF0000) == 0x0C070000)
+	if ((m400_gp_version & 0xFFFF0000) == 0x0C070000)
 	{
 		MALI_DEBUG_PRINT(4, ("Registering Mali-300 device\n"));
+		num_pp_cores = 1;
 		err = platform_device_add_resources(&mali_gpu_device, mali_gpu_resources_m300, sizeof(mali_gpu_resources_m300) / sizeof(mali_gpu_resources_m300[0]));
 		mali_write_phys(0xC0010020, 0xA); /* Enable direct memory mapping for FPGA */
 	}
@@ -120,6 +119,7 @@ int mali_platform_device_register(void)
 		{
 			/* Mali-400 MP1 r1p0 or r1p1 */
 			MALI_DEBUG_PRINT(4, ("Registering Mali-400 MP1 device\n"));
+			num_pp_cores = 1;
 			err = platform_device_add_resources(&mali_gpu_device, mali_gpu_resources_m400_mp1, sizeof(mali_gpu_resources_m400_mp1) / sizeof(mali_gpu_resources_m400_mp1[0]));
 			mali_write_phys(0xC0010020, 0xA); /* Enable direct memory mapping for FPGA */
 		}
@@ -127,6 +127,7 @@ int mali_platform_device_register(void)
 		{
 			/* Mali-400 MP2 r1p1 */
 			MALI_DEBUG_PRINT(4, ("Registering Mali-400 MP2 device\n"));
+			num_pp_cores = 2;
 			err = platform_device_add_resources(&mali_gpu_device, mali_gpu_resources_m400_mp2, sizeof(mali_gpu_resources_m400_mp2) / sizeof(mali_gpu_resources_m400_mp2[0]));
 			mali_write_phys(0xC0010020, 0xA); /* Enable direct memory mapping for FPGA */
 		}
@@ -150,6 +151,8 @@ int mali_platform_device_register(void)
 #endif
 				pm_runtime_enable(&(mali_gpu_device.dev));
 #endif
+				MALI_DEBUG_ASSERT(0 < num_pp_cores);
+				mali_core_scaling_init(num_pp_cores);
 
 				return 0;
 			}
@@ -165,6 +168,7 @@ void mali_platform_device_unregister(void)
 {
 	MALI_DEBUG_PRINT(4, ("mali_platform_device_unregister() called\n"));
 
+	mali_core_scaling_term();
 	platform_device_unregister(&mali_gpu_device);
 
 #if defined(CONFIG_ARCH_REALVIEW)
@@ -207,3 +211,8 @@ static void mali_write_phys(u32 phys_addr, u32 value)
 	}
 }
 #endif
+
+void mali_gpu_utilization_callback(struct mali_gpu_utilization_data *data)
+{
+	mali_core_scaling_update(data);
+}

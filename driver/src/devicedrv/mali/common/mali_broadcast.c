@@ -78,8 +78,6 @@ void mali_bcast_add_group(struct mali_bcast_unit *bcast_unit, struct mali_group 
 
 	/* store mask so we can restore on reset */
 	bcast_unit->current_mask = broadcast_mask;
-
-	mali_bcast_reset(bcast_unit);
 }
 
 void mali_bcast_remove_group(struct mali_bcast_unit *bcast_unit, struct mali_group *group)
@@ -98,8 +96,6 @@ void mali_bcast_remove_group(struct mali_bcast_unit *bcast_unit, struct mali_gro
 
 	/* store mask so we can restore on reset */
 	bcast_unit->current_mask = broadcast_mask;
-
-	mali_bcast_reset(bcast_unit);
 }
 
 void mali_bcast_reset(struct mali_bcast_unit *bcast_unit)

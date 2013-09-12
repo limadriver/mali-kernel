@@ -130,20 +130,10 @@ static irqreturn_t irq_handler_upper_half (int port_name, void* dev_id ) /* , st
 	irqreturn_t ret = IRQ_NONE;
 	mali_osk_irq_object_t *irq_object = (mali_osk_irq_object_t *)dev_id;
 
-#if defined(CONFIG_MALI_SHARED_INTERRUPTS)
-	if (MALI_TRUE == _mali_osk_pm_dev_ref_add_no_power_on())
-#endif /* defined(CONFIG_MALI_SHARED_INTERRUPTS) */
+	if (_MALI_OSK_ERR_OK == irq_object->uhandler(irq_object->data))
 	{
-
-		if (_MALI_OSK_ERR_OK == irq_object->uhandler(irq_object->data))
-		{
-			ret = IRQ_HANDLED;
-		}
-
+		ret = IRQ_HANDLED;
 	}
-#if defined(CONFIG_MALI_SHARED_INTERRUPTS)
-	_mali_osk_pm_dev_ref_dec_no_power_on();
-#endif /* defined(CONFIG_MALI_SHARED_INTERRUPTS) */
 
 	return ret;
 }

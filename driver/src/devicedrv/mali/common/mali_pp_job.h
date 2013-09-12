@@ -218,14 +218,6 @@ MALI_STATIC_INLINE void mali_pp_job_mark_sub_job_started(struct mali_pp_job *job
 	job->sub_jobs_started++;
 }
 
-MALI_STATIC_INLINE void mali_pp_job_mark_sub_job_not_stated(struct mali_pp_job *job, u32 sub_job)
-{
-	/* This is only safe on Mali-200. */
-	MALI_DEBUG_ASSERT(_MALI_PRODUCT_ID_MALI200 == mali_kernel_core_get_product_id());
-
-	job->sub_jobs_started--;
-}
-
 MALI_STATIC_INLINE void mali_pp_job_mark_sub_job_completed(struct mali_pp_job *job, mali_bool success)
 {
 	job->sub_jobs_completed++;

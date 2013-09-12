@@ -67,7 +67,7 @@ mali-y += \
 	linux/mali_kernel_linux.o \
 	common/mali_kernel_descriptor_mapping.o \
 	common/mali_session.o \
-	common/mali_device_pause_resume.o \
+	linux/mali_device_pause_resume.o \
 	common/mali_kernel_vsync.o \
 	linux/mali_ukk_vsync.o \
 	linux/mali_kernel_sysfs.o \
@@ -94,6 +94,7 @@ mali-y += \
 	common/mali_user_settings_db.o \
 	common/mali_kernel_utilization.o \
 	common/mali_l2_cache.o \
+	common/mali_pm_domain.o \
 	linux/mali_osk_pm.o \
 	linux/mali_pmu_power_up_down.o \
 	__malidrv_build_info.o
@@ -140,26 +141,41 @@ ccflags-y += -I$(src) -I$(src)/include -I$(src)/common -I$(src)/linux -I$(src)/p
 # Get subversion revision number, fall back to only ${MALI_RELEASE_NAME} if no svn info is available
 MALI_RELEASE_NAME=$(shell cat $(src)/.version 2> /dev/null)
 
-SVN_INFO = (cd $(src); (svn info || git svn info || \
-	echo -e "\nURL: $(MALI_RELEASE_NAME)\n" \
-	"Last Changed Rev: $(MALI_RELEASE_NAME)\n" \
-	"Last Changed Date: $(MALI_RELEASE_NAME)") 2>/dev/null)
+SVN_INFO = (cd $(src); svn info 2>/dev/null)
 
-SVN_REV := $(shell (cd $(src); echo "$(SVN_INFO)" | grep '^Revision: '| sed -e 's/^Revision: //' ) 2>/dev/null )
-ifeq ($(SVN_REV),)
-SVN_REV := $(MALI_RELEASE_NAME)
-else
-SVN_REV := $(MALI_RELEASE_NAME)-r$(SVN_REV)
+ifneq ($(shell $(SVN_INFO) 2>/dev/null),)
+# SVN detected
+SVN_REV := $(shell $(SVN_INFO) | grep '^Revision: '| sed -e 's/^Revision: //' 2>/dev/null)
+DRIVER_REV := $(MALI_RELEASE_NAME)-r$(SVN_REV)
+CHANGE_DATE := $(shell $(SVN_INFO) | grep '^Last Changed Date: ' | cut -d: -f2- | cut -b2-)
+CHANGED_REVISION := $(shell $(SVN_INFO) | grep '^Last Changed Rev: ' | cut -d: -f2- | cut -b2-)
+REPO_URL := $(shell $(SVN_INFO) | grep '^URL: ' | cut -d: -f2- | cut -b2-)
+
+else # SVN
+GIT_REV := $(shell cd $(src); git describe --always 2>/dev/null)
+ifneq ($(GIT_REV),)
+# Git detected
+DRIVER_REV := $(MALI_RELEASE_NAME)-$(GIT_REV)
+CHANGE_DATE := $(shell cd $(src); git log -1 --format="%ci")
+CHANGED_REVISION := $(GIT_REV)
+REPO_URL := $(shell cd $(src); git describe --all --always 2>/dev/null)
+
+else # Git
+# No Git or SVN detected
+DRIVER_REV := $(MALI_RELEASE_NAME)
+CHANGE_DATE := $(MALI_RELEASE_NAME)
+CHANGED_REVISION := $(MALI_RELEASE_NAME)
+endif
 endif
 
-ccflags-y += -DSVN_REV_STRING=\"$(SVN_REV)\"
+ccflags-y += -DSVN_REV_STRING=\"$(DRIVER_REV)\"
 
 VERSION_STRINGS :=
 VERSION_STRINGS += API_VERSION=$(shell cd $(src); grep "\#define _MALI_API_VERSION" $(FILES_PREFIX)include/linux/mali/mali_utgard_uk_types.h | cut -d' ' -f 3 )
-VERSION_STRINGS += REPO_URL=$(shell $(SVN_INFO) | grep '^URL: ' | cut -d: -f2- | cut -b2-)
-VERSION_STRINGS += REVISION=$(SVN_REV)
-VERSION_STRINGS += CHANGED_REVISION=$(shell $(SVN_INFO) | grep '^Last Changed Rev: ' | cut -d: -f2- | cut -b2-)
-VERSION_STRINGS += CHANGE_DATE=$(shell $(SVN_INFO) | grep '^Last Changed Date: ' | cut -d: -f2- | cut -b2-)
+VERSION_STRINGS += REPO_URL=$(REPO_URL)
+VERSION_STRINGS += REVISION=$(DRIVER_REV)
+VERSION_STRINGS += CHANGED_REVISION=$(CHANGED_REVISION)
+VERSION_STRINGS += CHANGE_DATE=$(CHANGE_DATE)
 VERSION_STRINGS += BUILD_DATE=$(shell date)
 ifdef CONFIG_MALI400_DEBUG
 VERSION_STRINGS += BUILD=debug

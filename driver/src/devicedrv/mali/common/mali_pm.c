@@ -16,6 +16,8 @@
 #include "mali_scheduler.h"
 #include "mali_kernel_utilization.h"
 #include "mali_group.h"
+#include "mali_pm_domain.h"
+#include "mali_pmu.h"
 
 static mali_bool mali_power_on = MALI_FALSE;
 
@@ -27,32 +29,8 @@ _mali_osk_errcode_t mali_pm_initialize(void)
 
 void mali_pm_terminate(void)
 {
+	mali_pm_domain_terminate();
 	_mali_osk_pm_dev_disable();
-}
-
-void mali_pm_core_event(enum mali_core_event core_event)
-{
-	MALI_DEBUG_ASSERT(MALI_CORE_EVENT_GP_START == core_event ||
-	                  MALI_CORE_EVENT_PP_START == core_event ||
-	                  MALI_CORE_EVENT_GP_STOP  == core_event ||
-	                  MALI_CORE_EVENT_PP_STOP  == core_event);
-
-	if (MALI_CORE_EVENT_GP_START == core_event || MALI_CORE_EVENT_PP_START == core_event)
-	{
-		_mali_osk_pm_dev_ref_add();
-		if (mali_utilization_enabled())
-		{
-			mali_utilization_core_start(_mali_osk_time_get_ns());
-		}
-	}
-	else
-	{
-		_mali_osk_pm_dev_ref_dec();
-		if (mali_utilization_enabled())
-		{
-			mali_utilization_core_end(_mali_osk_time_get_ns());
-		}
-	}
 }
 
 /* Reset GPU after power up */
@@ -70,21 +48,39 @@ void mali_pm_os_suspend(void)
 	MALI_DEBUG_PRINT(3, ("Mali PM: OS suspend\n"));
 	mali_gp_scheduler_suspend();
 	mali_pp_scheduler_suspend();
+	mali_utilization_suspend();
 	mali_group_power_off();
 	mali_power_on = MALI_FALSE;
 }
 
 void mali_pm_os_resume(void)
 {
+	struct mali_pmu_core *pmu = mali_pmu_get_global_pmu_core();
+	mali_bool do_reset = MALI_FALSE;
+
 	MALI_DEBUG_PRINT(3, ("Mali PM: OS resume\n"));
+
 	if (MALI_TRUE != mali_power_on)
+	{
+		do_reset = MALI_TRUE;
+	}
+
+	if (NULL != pmu)
+	{
+		mali_pmu_reset(pmu);
+	}
+
+	mali_power_on = MALI_TRUE;
+	_mali_osk_write_mem_barrier();
+
+	if (do_reset)
 	{
 		mali_pm_reset_gpu();
 		mali_group_power_on();
 	}
+
 	mali_gp_scheduler_resume();
 	mali_pp_scheduler_resume();
-	mali_power_on = MALI_TRUE;
 }
 
 void mali_pm_runtime_suspend(void)
@@ -96,11 +92,37 @@ void mali_pm_runtime_suspend(void)
 
 void mali_pm_runtime_resume(void)
 {
+	struct mali_pmu_core *pmu = mali_pmu_get_global_pmu_core();
+	mali_bool do_reset = MALI_FALSE;
+
 	MALI_DEBUG_PRINT(3, ("Mali PM: Runtime resume\n"));
+
 	if (MALI_TRUE != mali_power_on)
+	{
+		do_reset = MALI_TRUE;
+	}
+
+	if (NULL != pmu)
+	{
+		mali_pmu_reset(pmu);
+	}
+
+	mali_power_on = MALI_TRUE;
+	_mali_osk_write_mem_barrier();
+
+	if (do_reset)
 	{
 		mali_pm_reset_gpu();
 		mali_group_power_on();
 	}
+}
+
+void mali_pm_set_power_is_on(void)
+{
 	mali_power_on = MALI_TRUE;
+}
+
+mali_bool mali_pm_is_power_on(void)
+{
+	return mali_power_on;
 }

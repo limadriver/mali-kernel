@@ -14,9 +14,17 @@
 #include "mali_osk.h"
 #include "mali_pp_job.h"
 #include "mali_group.h"
+#include "linux/mali/mali_utgard.h"
 
+/** Initalize the HW independent parts of the  PP scheduler
+ */
 _mali_osk_errcode_t mali_pp_scheduler_initialize(void);
 void mali_pp_scheduler_terminate(void);
+
+/** Poplulate the PP scheduler with groups
+ */
+void mali_pp_scheduler_populate(void);
+void mali_pp_scheduler_depopulate(void);
 
 void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *job, u32 sub_job, mali_bool success);
 
@@ -53,5 +61,20 @@ void mali_pp_scheduler_zap_all_active(struct mali_session_data *session);
 
 int mali_pp_scheduler_get_queue_depth(void);
 u32 mali_pp_scheduler_dump_state(char *buf, u32 size);
+
+void mali_pp_scheduler_enable_group(struct mali_group *group);
+void mali_pp_scheduler_disable_group(struct mali_group *group);
+
+int mali_pp_scheduler_set_perf_level(u32 cores);
+
+u32 mali_pp_scheduler_get_num_cores_total(void);
+u32 mali_pp_scheduler_get_num_cores_enabled(void);
+
+/**
+ * @brief Returns the number of Pixel Processors in the system irrespective of the context
+ *
+ * @return number of physical Pixel Processor cores in the system
+ */
+u32 mali_pp_scheduler_get_num_cores_total(void);
 
 #endif /* __MALI_PP_SCHEDULER_H__ */

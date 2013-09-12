@@ -16,7 +16,7 @@
 #include <linux/platform_device.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
-#include <asm/spinlock.h>
+#include <linux/mutex.h>
 
 #include "mali_ukk.h"
 #include "mali_osk.h"
@@ -35,7 +35,7 @@ struct mali_dma_buf_attachment {
 	struct sg_table *sgt;
 	struct mali_session_data *session;
 	int map_ref;
-	spinlock_t map_lock;
+	struct mutex map_lock;
 	mali_bool is_mapped;
 	wait_queue_head_t wait_queue;
 };
@@ -58,7 +58,7 @@ void mali_dma_buf_release(void *ctx, void *handle)
 #endif
 
 	/* Wait for buffer to become unmapped */
-	wait_event(mem->wait_queue, 0 == mem->map_ref);
+	wait_event(mem->wait_queue, !mem->is_mapped);
 	MALI_DEBUG_ASSERT(!mem->is_mapped);
 
 	dma_buf_detach(mem->buf, mem->attachment);
@@ -74,14 +74,13 @@ int mali_dma_buf_map(struct mali_dma_buf_attachment *mem, struct mali_session_da
 {
 	struct mali_page_directory *pagedir;
 	struct scatterlist *sg;
-	unsigned long irq_flags;
 	int i;
 
 	MALI_DEBUG_ASSERT_POINTER(mem);
 	MALI_DEBUG_ASSERT_POINTER(session);
 	MALI_DEBUG_ASSERT(mem->session == session);
 
-	spin_lock_irqsave(&mem->map_lock, irq_flags);
+	mutex_lock(&mem->map_lock);
 
 	mem->map_ref++;
 
@@ -89,8 +88,6 @@ int mali_dma_buf_map(struct mali_dma_buf_attachment *mem, struct mali_session_da
 
 	if (1 == mem->map_ref)
 	{
-		spin_unlock_irqrestore(&mem->map_lock, irq_flags);
-
 		/* First reference taken, so we need to map the dma buf */
 		MALI_DEBUG_ASSERT(!mem->is_mapped);
 
@@ -127,22 +124,16 @@ int mali_dma_buf_map(struct mali_dma_buf_attachment *mem, struct mali_session_da
 			mali_mmu_pagedir_update(pagedir, virt, guard_phys, MALI_MMU_PAGE_SIZE, MALI_CACHE_STANDARD);
 		}
 
-		spin_lock_irqsave(&mem->map_lock, irq_flags);
 		mem->is_mapped = MALI_TRUE;
-		spin_unlock_irqrestore(&mem->map_lock, irq_flags);
+		mutex_unlock(&mem->map_lock);
 
 		/* Wake up any thread waiting for buffer to become mapped */
 		wake_up_all(&mem->wait_queue);
 	}
 	else
 	{
-		/* Wait for buffer to become mapped */
-		if (!mem->is_mapped)
-		{
-			MALI_DEBUG_PRINT(4, ("Mali DMA-buf: Waiting for buffer to become mapped...\n"));
-		}
-		spin_unlock_irqrestore(&mem->map_lock, irq_flags);
-		wait_event(mem->wait_queue, MALI_TRUE == mem->is_mapped);
+		MALI_DEBUG_ASSERT(mem->is_mapped);
+		mutex_unlock(&mem->map_lock);
 	}
 
 	return 0;
@@ -150,13 +141,11 @@ int mali_dma_buf_map(struct mali_dma_buf_attachment *mem, struct mali_session_da
 
 void mali_dma_buf_unmap(struct mali_dma_buf_attachment *mem)
 {
-	unsigned long irq_flags;
-
 	MALI_DEBUG_ASSERT_POINTER(mem);
 	MALI_DEBUG_ASSERT_POINTER(mem->attachment);
 	MALI_DEBUG_ASSERT_POINTER(mem->buf);
 
-	spin_lock_irqsave(&mem->map_lock, irq_flags);
+	mutex_lock(&mem->map_lock);
 
 	mem->map_ref--;
 
@@ -169,7 +158,7 @@ void mali_dma_buf_unmap(struct mali_dma_buf_attachment *mem)
 		mem->is_mapped = MALI_FALSE;
 	}
 
-	spin_unlock_irqrestore(&mem->map_lock, irq_flags);
+	mutex_unlock(&mem->map_lock);
 
 	/* Wake up any thread waiting for buffer to become unmapped */
 	wake_up_all(&mem->wait_queue);
@@ -311,7 +300,6 @@ int mali_attach_dma_buf(struct mali_session_data *session, _mali_uk_attach_dma_b
 		return -EFAULT;
 	}
 
-
 	fd = args.mem_fd;
 
 	buf = dma_buf_get(fd);
@@ -340,7 +328,7 @@ int mali_attach_dma_buf(struct mali_session_data *session, _mali_uk_attach_dma_b
 	mem->buf = buf;
 	mem->session = session;
 	mem->map_ref = 0;
-	spin_lock_init(&mem->map_lock);
+	mutex_init(&mem->map_lock);
 	init_waitqueue_head(&mem->wait_queue);
 
 	mem->attachment = dma_buf_attach(mem->buf, &mali_platform_device->dev);

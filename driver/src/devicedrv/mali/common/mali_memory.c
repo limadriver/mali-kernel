@@ -1034,22 +1034,6 @@ static _mali_osk_errcode_t _mali_ukk_mem_munmap_internal( _mali_uk_mem_munmap_s 
 	   It is allowed to call this function severeal times, which might happen if zapping below fails. */
 	mali_allocation_engine_release_pt1_mali_pagetables_unmap(memory_engine, descriptor);
 
-#ifdef MALI_UNMAP_FLUSH_ALL_MALI_L2
-	{
-		u32 i;
-		u32 number_of_l2_ccores = mali_l2_cache_core_get_glob_num_l2_cores();
-		for (i = 0; i < number_of_l2_ccores; i++)
-		{
-			struct mali_l2_cache_core *core;
-			core = mali_l2_cache_core_get_glob_l2_core(i);
-			if (mali_l2_cache_power_is_enabled_get(core) )
-			{
-				mali_l2_cache_invalidate_all_force(core);
-			}
-		}
-	}
-#endif
-
 	mali_scheduler_zap_all_active(session_data);
 
 	/* Removes the descriptor from the session's memory list, releases physical memory, releases descriptor */

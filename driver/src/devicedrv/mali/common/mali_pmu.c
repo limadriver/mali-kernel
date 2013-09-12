@@ -17,6 +17,8 @@
 #include "mali_pp.h"
 #include "mali_kernel_common.h"
 #include "mali_osk.h"
+#include "mali_pm.h"
+#include "mali_osk_mali.h"
 
 static u32 mali_pmu_detect_mask(u32 number_of_pp_cores, u32 number_of_l2_caches);
 
@@ -25,7 +27,10 @@ static u32 mali_pmu_detect_mask(u32 number_of_pp_cores, u32 number_of_l2_caches)
 struct mali_pmu_core
 {
 	struct mali_hw_core hw_core;
-	u32 mali_registered_cores_power_mask;
+	_mali_osk_lock_t *lock;
+	u32 registered_cores_mask;
+	u32 active_cores_mask;
+	u32 switch_delay;
 };
 
 static struct mali_pmu_core *mali_global_pmu_core = NULL;
@@ -37,8 +42,13 @@ typedef enum {
 	PMU_REG_ADDR_MGMT_POWER_DOWN                = 0x04,     /*< Power down register */
 	PMU_REG_ADDR_MGMT_STATUS                    = 0x08,     /*< Core sleep status register */
 	PMU_REG_ADDR_MGMT_INT_MASK                  = 0x0C,     /*< Interrupt mask register */
-	PMU_REGISTER_ADDRESS_SPACE_SIZE             = 0x10,     /*< Size of register space */
+	PMU_REG_ADDR_MGMT_INT_RAWSTAT               = 0x10,     /*< Interrupt raw status register */
+	PMU_REG_ADDR_MGMT_INT_CLEAR                 = 0x18,     /*< Interrupt clear register */
+	PMU_REG_ADDR_MGMT_SW_DELAY                  = 0x1C,     /*< Switch delay register */
+	PMU_REGISTER_ADDRESS_SPACE_SIZE             = 0x28,     /*< Size of register space */
 } pmu_reg_addr_mgmt_addr;
+
+#define PMU_REG_VAL_IRQ 1
 
 struct mali_pmu_core *mali_pmu_create(_mali_osk_resource_t *resource, u32 number_of_pp_cores, u32 number_of_l2_caches)
 {
@@ -50,15 +60,28 @@ struct mali_pmu_core *mali_pmu_create(_mali_osk_resource_t *resource, u32 number
 	pmu = (struct mali_pmu_core *)_mali_osk_malloc(sizeof(struct mali_pmu_core));
 	if (NULL != pmu)
 	{
-		pmu->mali_registered_cores_power_mask = mali_pmu_detect_mask(number_of_pp_cores, number_of_l2_caches);
-		if (_MALI_OSK_ERR_OK == mali_hw_core_create(&pmu->hw_core, resource, PMU_REGISTER_ADDRESS_SPACE_SIZE))
+		pmu->lock = _mali_osk_lock_init(_MALI_OSK_LOCKFLAG_SPINLOCK | _MALI_OSK_LOCKFLAG_NONINTERRUPTABLE,
+		                                0, _MALI_OSK_LOCK_ORDER_PMU);
+		if (NULL != pmu->lock)
 		{
-			if (_MALI_OSK_ERR_OK == mali_pmu_reset(pmu))
+			pmu->registered_cores_mask = mali_pmu_detect_mask(number_of_pp_cores, number_of_l2_caches);
+			pmu->active_cores_mask = pmu->registered_cores_mask;
+
+			if (_MALI_OSK_ERR_OK == mali_hw_core_create(&pmu->hw_core, resource, PMU_REGISTER_ADDRESS_SPACE_SIZE))
 			{
-				mali_global_pmu_core = pmu;
-				return pmu;
+				_mali_osk_errcode_t err;
+				struct _mali_osk_device_data data = { 0, };
+
+				err = _mali_osk_device_data_get(&data);
+				if (_MALI_OSK_ERR_OK == err)
+				{
+					pmu->switch_delay = data.pmu_switch_delay;
+					mali_global_pmu_core = pmu;
+					return pmu;
+				}
+				mali_hw_core_delete(&pmu->hw_core);
 			}
-			mali_hw_core_delete(&pmu->hw_core);
+			_mali_osk_lock_term(pmu->lock);
 		}
 		_mali_osk_free(pmu);
 	}
@@ -72,76 +95,259 @@ void mali_pmu_delete(struct mali_pmu_core *pmu)
 	MALI_DEBUG_ASSERT(pmu == mali_global_pmu_core);
 	MALI_DEBUG_PRINT(2, ("Mali PMU: Deleting Mali PMU core\n"));
 
+	_mali_osk_lock_term(pmu->lock);
 	mali_hw_core_delete(&pmu->hw_core);
 	_mali_osk_free(pmu);
 	mali_global_pmu_core = NULL;
 }
 
+static void mali_pmu_lock(struct mali_pmu_core *pmu)
+{
+	_mali_osk_lock_wait(pmu->lock, _MALI_OSK_LOCKMODE_RW);
+}
+static void mali_pmu_unlock(struct mali_pmu_core *pmu)
+{
+	_mali_osk_lock_signal(pmu->lock, _MALI_OSK_LOCKMODE_RW);
+}
+
+static _mali_osk_errcode_t mali_pmu_send_command_internal(struct mali_pmu_core *pmu, const u32 command, const u32 mask)
+{
+	u32 rawstat;
+	u32 timeout = MALI_REG_POLL_COUNT_SLOW;
+
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+	MALI_DEBUG_ASSERT(0 == (mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_RAWSTAT)
+	                        & PMU_REG_VAL_IRQ));
+
+	mali_hw_core_register_write(&pmu->hw_core, command, mask);
+
+	/* Wait for the command to complete */
+	do
+	{
+		rawstat = mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_RAWSTAT);
+		--timeout;
+	} while (0 == (rawstat & PMU_REG_VAL_IRQ) && 0 < timeout);
+
+	MALI_DEBUG_ASSERT(0 < timeout);
+	if (0 == timeout)
+	{
+		return _MALI_OSK_ERR_TIMEOUT;
+	}
+
+	mali_hw_core_register_write(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_CLEAR, PMU_REG_VAL_IRQ);
+
+	return _MALI_OSK_ERR_OK;
+}
+
+static _mali_osk_errcode_t mali_pmu_send_command(struct mali_pmu_core *pmu, const u32 command, const u32 mask)
+{
+	u32 stat;
+
+	if (0 == mask) return _MALI_OSK_ERR_OK;
+
+	stat = mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_STATUS);
+	stat &= pmu->registered_cores_mask;
+
+	switch (command)
+	{
+		case PMU_REG_ADDR_MGMT_POWER_DOWN:
+			if (mask == stat) return _MALI_OSK_ERR_OK;
+			break;
+		case PMU_REG_ADDR_MGMT_POWER_UP:
+			if (0 == (stat & mask)) return _MALI_OSK_ERR_OK;
+			break;
+		default:
+			MALI_DEBUG_ASSERT(0);
+			break;
+	}
+
+	mali_pmu_send_command_internal(pmu, command, mask);
+
+#if defined(DEBUG)
+	{
+		/* Get power status of cores */
+		stat = mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_STATUS);
+		stat &= pmu->registered_cores_mask;
+
+		switch (command)
+		{
+			case PMU_REG_ADDR_MGMT_POWER_DOWN:
+				MALI_DEBUG_ASSERT(mask == (stat & mask));
+				MALI_DEBUG_ASSERT(0 == (stat & pmu->active_cores_mask));
+				MALI_DEBUG_ASSERT((pmu->registered_cores_mask & ~pmu->active_cores_mask) == stat);
+				break;
+			case PMU_REG_ADDR_MGMT_POWER_UP:
+				MALI_DEBUG_ASSERT(0 == (stat & mask));
+				MALI_DEBUG_ASSERT(0 == (stat & pmu->active_cores_mask));
+				break;
+			default:
+				MALI_DEBUG_ASSERT(0);
+				break;
+		}
+	}
+#endif /* defined(DEBUG) */
+
+	return _MALI_OSK_ERR_OK;
+}
+
 _mali_osk_errcode_t mali_pmu_reset(struct mali_pmu_core *pmu)
 {
-	/* Don't use interrupts - just poll status */
-	mali_hw_core_register_write(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_MASK, 0);
-	return _MALI_OSK_ERR_OK;
-}
+	_mali_osk_errcode_t err;
+	u32 cores_off_mask, cores_on_mask, stat;
 
-_mali_osk_errcode_t mali_pmu_powerdown_all(struct mali_pmu_core *pmu)
-{
-	u32 stat;
-	u32 timeout;
+	mali_pmu_lock(pmu);
 
-	MALI_DEBUG_ASSERT_POINTER(pmu);
-	MALI_DEBUG_ASSERT( pmu->mali_registered_cores_power_mask != 0 );
-	MALI_DEBUG_PRINT( 4, ("Mali PMU: power down (0x%08X)\n", pmu->mali_registered_cores_power_mask) );
+	/* Setup the desired defaults */
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_MASK, 0);
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_SW_DELAY, pmu->switch_delay);
 
-	mali_hw_core_register_write(&pmu->hw_core, PMU_REG_ADDR_MGMT_POWER_DOWN, pmu->mali_registered_cores_power_mask);
+	/* Get power status of cores */
+	stat = mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_STATUS);
 
-	/* Wait for cores to be powered down (100 x 100us = 100ms) */
-	timeout = MALI_REG_POLL_COUNT_SLOW ;
-	do
+	cores_off_mask = pmu->registered_cores_mask & ~(stat | pmu->active_cores_mask);
+	cores_on_mask  = pmu->registered_cores_mask &  (stat & pmu->active_cores_mask);
+
+	if (0 != cores_off_mask)
 	{
-		/* Get status of sleeping cores */
+		err = mali_pmu_send_command_internal(pmu, PMU_REG_ADDR_MGMT_POWER_DOWN, cores_off_mask);
+		if (_MALI_OSK_ERR_OK != err) return err;
+	}
+
+	if (0 != cores_on_mask)
+	{
+		err = mali_pmu_send_command_internal(pmu, PMU_REG_ADDR_MGMT_POWER_UP, cores_on_mask);
+		if (_MALI_OSK_ERR_OK != err) return err;
+	}
+
+#if defined(DEBUG)
+	{
 		stat = mali_hw_core_register_read(&pmu->hw_core, PMU_REG_ADDR_MGMT_STATUS);
-		stat &= pmu->mali_registered_cores_power_mask;
-		if( stat == pmu->mali_registered_cores_power_mask ) break; /* All cores we wanted are now asleep */
-		timeout--;
-	} while( timeout > 0 );
+		stat &= pmu->registered_cores_mask;
 
-	if( timeout == 0 )
-	{
-		return _MALI_OSK_ERR_TIMEOUT;
+		MALI_DEBUG_ASSERT(stat == (pmu->registered_cores_mask & ~pmu->active_cores_mask));
 	}
+#endif /* defined(DEBUG) */
+
+	mali_pmu_unlock(pmu);
 
 	return _MALI_OSK_ERR_OK;
 }
 
-_mali_osk_errcode_t mali_pmu_powerup_all(struct mali_pmu_core *pmu)
+_mali_osk_errcode_t mali_pmu_power_down(struct mali_pmu_core *pmu, u32 mask)
 {
-	u32 stat;
-	u32 timeout;
-       
+	_mali_osk_errcode_t err;
+
 	MALI_DEBUG_ASSERT_POINTER(pmu);
-	MALI_DEBUG_ASSERT( pmu->mali_registered_cores_power_mask != 0 ); /* Shouldn't be zero */
-	MALI_DEBUG_PRINT( 4, ("Mali PMU: power up (0x%08X)\n", pmu->mali_registered_cores_power_mask) );
+	MALI_DEBUG_ASSERT(pmu->registered_cores_mask != 0 );
 
-	mali_hw_core_register_write(&pmu->hw_core, PMU_REG_ADDR_MGMT_POWER_UP, pmu->mali_registered_cores_power_mask);
-
-	/* Wait for cores to be powered up (100 x 100us = 100ms) */
-	timeout = MALI_REG_POLL_COUNT_SLOW;
-	do
+	/* Make sure we have a valid power domain mask */
+	if (mask > pmu->registered_cores_mask)
 	{
-		/* Get status of sleeping cores */
-		stat = mali_hw_core_register_read(&pmu->hw_core,PMU_REG_ADDR_MGMT_STATUS);
-		stat &= pmu->mali_registered_cores_power_mask;
-		if ( stat == 0 ) break; /* All cores we wanted are now awake */
-		timeout--;
-	} while ( timeout > 0 );
-
-	if ( timeout == 0 )
-	{
-		return _MALI_OSK_ERR_TIMEOUT;
+		return _MALI_OSK_ERR_INVALID_ARGS;
 	}
 
-	return _MALI_OSK_ERR_OK;
+	mali_pmu_lock(pmu);
+
+	MALI_DEBUG_PRINT(4, ("Mali PMU: Power down (0x%08X)\n", mask));
+
+	pmu->active_cores_mask &= ~mask;
+
+	_mali_osk_pm_dev_ref_add_no_power_on();
+	if (!mali_pm_is_power_on())
+	{
+		/* Don't touch hardware if all of Mali is powered off. */
+		_mali_osk_pm_dev_ref_dec_no_power_on();
+		mali_pmu_unlock(pmu);
+
+		MALI_DEBUG_PRINT(4, ("Mali PMU: Skipping power down (0x%08X) since Mali is off\n", mask));
+
+		return _MALI_OSK_ERR_BUSY;
+	}
+
+	err = mali_pmu_send_command(pmu, PMU_REG_ADDR_MGMT_POWER_DOWN, mask);
+
+	_mali_osk_pm_dev_ref_dec_no_power_on();
+	mali_pmu_unlock(pmu);
+
+	return err;
+}
+
+_mali_osk_errcode_t mali_pmu_power_up(struct mali_pmu_core *pmu, u32 mask)
+{
+	_mali_osk_errcode_t err;
+
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+	MALI_DEBUG_ASSERT(pmu->registered_cores_mask != 0 );
+
+	/* Make sure we have a valid power domain mask */
+	if (mask & ~pmu->registered_cores_mask)
+	{
+		return _MALI_OSK_ERR_INVALID_ARGS;
+	}
+
+	mali_pmu_lock(pmu);
+
+	MALI_DEBUG_PRINT(4, ("Mali PMU: Power up (0x%08X)\n", mask));
+
+	pmu->active_cores_mask |= mask;
+
+	_mali_osk_pm_dev_ref_add_no_power_on();
+	if (!mali_pm_is_power_on())
+	{
+		/* Don't touch hardware if all of Mali is powered off. */
+		_mali_osk_pm_dev_ref_dec_no_power_on();
+		mali_pmu_unlock(pmu);
+
+		MALI_DEBUG_PRINT(4, ("Mali PMU: Skipping power up (0x%08X) since Mali is off\n", mask));
+
+		return _MALI_OSK_ERR_BUSY;
+	}
+
+	err = mali_pmu_send_command(pmu, PMU_REG_ADDR_MGMT_POWER_UP, mask);
+
+	_mali_osk_pm_dev_ref_dec_no_power_on();
+	mali_pmu_unlock(pmu);
+
+	return err;
+}
+
+_mali_osk_errcode_t mali_pmu_power_down_all(struct mali_pmu_core *pmu)
+{
+	_mali_osk_errcode_t err;
+
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+	MALI_DEBUG_ASSERT(pmu->registered_cores_mask != 0);
+
+	mali_pmu_lock(pmu);
+
+	/* Setup the desired defaults in case we were called before mali_pmu_reset() */
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_MASK, 0);
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_SW_DELAY, pmu->switch_delay);
+
+	err = mali_pmu_send_command(pmu, PMU_REG_ADDR_MGMT_POWER_DOWN, pmu->registered_cores_mask);
+
+	mali_pmu_unlock(pmu);
+
+	return err;
+}
+
+_mali_osk_errcode_t mali_pmu_power_up_all(struct mali_pmu_core *pmu)
+{
+	_mali_osk_errcode_t err;
+
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+	MALI_DEBUG_ASSERT(pmu->registered_cores_mask != 0);
+
+	mali_pmu_lock(pmu);
+
+	/* Setup the desired defaults in case we were called before mali_pmu_reset() */
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_INT_MASK, 0);
+	mali_hw_core_register_write_relaxed(&pmu->hw_core, PMU_REG_ADDR_MGMT_SW_DELAY, pmu->switch_delay);
+
+	err = mali_pmu_send_command(pmu, PMU_REG_ADDR_MGMT_POWER_UP, pmu->active_cores_mask);
+
+	mali_pmu_unlock(pmu);
+	return err;
 }
 
 struct mali_pmu_core *mali_pmu_get_global_pmu_core(void)

@@ -93,6 +93,22 @@
 	MALI_GPU_RESOURCES_MALI450_MP2(base_addr, gp_irq, gp_mmu_irq, pp0_irq, pp0_mmu_irq, pp1_irq, pp1_mmu_irq, pp_bcast_irq) \
 	MALI_GPU_RESOURCE_PMU(base_addr + 0x2000) \
 
+#define MALI_GPU_RESOURCES_MALI450_MP3(base_addr, gp_irq, gp_mmu_irq, pp0_irq, pp0_mmu_irq, pp1_irq, pp1_mmu_irq, pp2_irq, pp2_mmu_irq, pp_bcast_irq) \
+	MALI_GPU_RESOURCE_L2(base_addr + 0x10000) \
+	MALI_GPU_RESOURCE_GP_WITH_MMU(base_addr + 0x00000, gp_irq, base_addr + 0x03000, gp_mmu_irq) \
+	MALI_GPU_RESOURCE_L2(base_addr + 0x01000) \
+	MALI_GPU_RESOURCE_PP_WITH_MMU(0, base_addr + 0x08000, pp0_irq, base_addr + 0x04000, pp0_mmu_irq) \
+	MALI_GPU_RESOURCE_PP_WITH_MMU(1, base_addr + 0x0A000, pp1_irq, base_addr + 0x05000, pp1_mmu_irq) \
+	MALI_GPU_RESOURCE_PP_WITH_MMU(2, base_addr + 0x0C000, pp2_irq, base_addr + 0x06000, pp2_mmu_irq) \
+	MALI_GPU_RESOURCE_BCAST(base_addr + 0x13000) \
+	MALI_GPU_RESOURCE_DLBU(base_addr + 0x14000) \
+	MALI_GPU_RESOURCE_PP_BCAST(base_addr + 0x16000, pp_bcast_irq) \
+	MALI_GPU_RESOURCE_PP_MMU_BCAST(base_addr + 0x15000)
+
+#define MALI_GPU_RESOURCES_MALI450_MP3_PMU(base_addr, gp_irq, gp_mmu_irq, pp0_irq, pp0_mmu_irq, pp1_irq, pp1_mmu_irq, pp2_irq, pp2_mmu_irq, pp_bcast_irq) \
+	MALI_GPU_RESOURCES_MALI450_MP3(base_addr, gp_irq, gp_mmu_irq, pp0_irq, pp0_mmu_irq, pp1_irq, pp1_mmu_irq, pp2_irq, pp2_mmu_irq, pp_bcast_irq) \
+	MALI_GPU_RESOURCE_PMU(base_addr + 0x2000) \
+
 #define MALI_GPU_RESOURCES_MALI450_MP4(base_addr, gp_irq, gp_mmu_irq, pp0_irq, pp0_mmu_irq, pp1_irq, pp1_mmu_irq, pp2_irq, pp2_mmu_irq, pp3_irq, pp3_mmu_irq, pp_bcast_irq) \
 	MALI_GPU_RESOURCE_L2(base_addr + 0x10000) \
 	MALI_GPU_RESOURCE_GP_WITH_MMU(base_addr + 0x00000, gp_irq, base_addr + 0x03000, gp_mmu_irq) \
@@ -300,6 +316,13 @@
 		.end = pp_mmu_bcast_addr + 0x100, \
 	},
 
+struct mali_gpu_utilization_data
+{
+	unsigned int utilization_gpu; /* Utilization for GP and all PP cores combined, 0 = no utilization, 256 = full utilization */
+	unsigned int utilization_gp;  /* Utilization for GP core only, 0 = no utilization, 256 = full utilization */
+	unsigned int utilization_pp;  /* Utilization for all PP cores combined, 0 = no utilization, 256 = full utilization */
+};
+
 struct mali_gpu_device_data
 {
 	/* Dedicated GPU memory range (physical). */
@@ -317,7 +340,16 @@ struct mali_gpu_device_data
 	unsigned long utilization_interval;
 
 	/* Function that will receive periodic GPU utilization numbers */
-	void (*utilization_handler)(unsigned int);
+	void (*utilization_callback)(struct mali_gpu_utilization_data *data);
+
+	/*
+	 * Mali PMU switch delay.
+	 * Only needed if the power gates are connected to the PMU in a high fanout
+	 * network. This value is the number of Mali clock cycles it takes to
+	 * enable the power gates and turn on the power mesh.
+	 * This value will have no effect if a daisy chain implementation is used.
+	 */
+	unsigned long pmu_switch_delay;
 };
 
 /** @brief MALI GPU power down using MALI in-built PMU
@@ -333,5 +365,26 @@ int mali_pmu_powerdown(void);
  */
 int mali_pmu_powerup(void);
 
+/**
+ * Pause the scheduling and power state changes of Mali device driver.
+ * mali_dev_resume() must always be called as soon as possible after this function
+ * in order to resume normal operation of the Mali driver.
+ */
+void mali_dev_pause(void);
+
+/**
+ * Resume scheduling and allow power changes in Mali device driver.
+ * This must always be called after mali_dev_pause().
+ */
+void mali_dev_resume(void);
+
+/** @brief Set the desired number of PP cores to use.
+ *
+ * The internal Mali PMU will be used, if present, to physically power off the PP cores.
+ *
+ * @param num_cores The number of desired cores
+ * @return 0 on success, otherwise error. -EINVAL means an invalid number of cores was specified.
+ */
+int mali_perf_set_num_pp_cores(unsigned int num_cores);
 
 #endif

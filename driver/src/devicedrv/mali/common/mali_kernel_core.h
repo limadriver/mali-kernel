@@ -30,7 +30,22 @@ void mali_terminate_subsystems(void);
 
 _mali_product_id_t mali_kernel_core_get_product_id(void);
 
+u32 mali_kernel_core_get_gpu_major_version(void);
+
+u32 mali_kernel_core_get_gpu_minor_version(void);
+
 u32 _mali_kernel_core_dump_state(char* buf, u32 size);
+
+MALI_STATIC_INLINE mali_bool mali_is_mali450(void)
+{
+	return _MALI_PRODUCT_ID_MALI450 == mali_kernel_core_get_product_id();
+}
+
+MALI_STATIC_INLINE mali_bool mali_is_mali400(void)
+{
+	u32 id = mali_kernel_core_get_product_id();
+	return _MALI_PRODUCT_ID_MALI400 == id || _MALI_PRODUCT_ID_MALI300 == id;
+}
 
 #endif /* __MALI_KERNEL_CORE_H__ */
 

@@ -13,18 +13,8 @@
 
 #include "mali_osk.h"
 
-enum mali_core_event
-{
-	MALI_CORE_EVENT_GP_START,
-	MALI_CORE_EVENT_GP_STOP,
-	MALI_CORE_EVENT_PP_START,
-	MALI_CORE_EVENT_PP_STOP
-};
-
 _mali_osk_errcode_t mali_pm_initialize(void);
 void mali_pm_terminate(void);
-
-void mali_pm_core_event(enum mali_core_event core_event);
 
 /* Callback functions registered for the runtime PMM system */
 void mali_pm_os_suspend(void);
@@ -32,5 +22,7 @@ void mali_pm_os_resume(void);
 void mali_pm_runtime_suspend(void);
 void mali_pm_runtime_resume(void);
 
+void mali_pm_set_power_is_on(void);
+mali_bool mali_pm_is_power_on(void);
 
 #endif /* __MALI_PM_H__ */

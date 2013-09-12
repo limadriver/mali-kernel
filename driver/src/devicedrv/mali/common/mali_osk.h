@@ -216,6 +216,8 @@ typedef enum
 	_MALI_OSK_LOCK_ORDER_MEM_INFO,
 	_MALI_OSK_LOCK_ORDER_MEM_SESSION,
 	_MALI_OSK_LOCK_ORDER_SESSIONS,
+	_MALI_OSK_LOCK_ORDER_PM_DOMAIN,
+	_MALI_OSK_LOCK_ORDER_PMU,
 
 	_MALI_OSK_LOCK_ORDER_FIRST
 } _mali_osk_lock_order_t;
@@ -1780,6 +1782,10 @@ mali_bool _mali_osk_pm_dev_ref_add_no_power_on(void);
  * @note This must be used to release references taken with \a _mali_osk_pm_dev_ref_add_no_power_on().
  */
 void _mali_osk_pm_dev_ref_dec_no_power_on(void);
+
+/** @brief Block untill pending PM operations are done
+ */
+void _mali_osk_pm_dev_barrier(void);
 
 /** @} */ /* end group  _mali_osk_miscellaneous */
 

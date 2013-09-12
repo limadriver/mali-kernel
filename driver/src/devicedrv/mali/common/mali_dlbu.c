@@ -164,6 +164,13 @@ _mali_osk_errcode_t mali_dlbu_reset(struct mali_dlbu_core *dlbu)
 	return err;
 }
 
+void mali_dlbu_update_mask(struct mali_dlbu_core *dlbu)
+{
+	MALI_DEBUG_ASSERT_POINTER(dlbu);
+
+	mali_hw_core_register_write(&dlbu->hw_core, MALI_DLBU_REGISTER_PP_ENABLE_MASK, dlbu->pp_cores_mask);
+}
+
 void mali_dlbu_add_group(struct mali_dlbu_core *dlbu, struct mali_group *group)
 {
 	struct mali_pp_core *pp_core;
@@ -177,8 +184,6 @@ void mali_dlbu_add_group(struct mali_dlbu_core *dlbu, struct mali_group *group)
 
 	dlbu->pp_cores_mask |= bcast_id;
 	MALI_DEBUG_PRINT(3, ("Mali DLBU: Adding core[%d] New mask= 0x%02x\n", bcast_id , dlbu->pp_cores_mask));
-
-	mali_hw_core_register_write(&dlbu->hw_core, MALI_DLBU_REGISTER_PP_ENABLE_MASK, dlbu->pp_cores_mask);
 }
 
 /* Remove a group from the DLBU */
@@ -195,8 +200,6 @@ void mali_dlbu_remove_group(struct mali_dlbu_core *dlbu, struct mali_group *grou
 
 	dlbu->pp_cores_mask &= ~bcast_id;
 		MALI_DEBUG_PRINT(3, ("Mali DLBU: Removing core[%d] New mask= 0x%02x\n", bcast_id, dlbu->pp_cores_mask));
-
-	mali_hw_core_register_write(&dlbu->hw_core, MALI_DLBU_REGISTER_PP_ENABLE_MASK, dlbu->pp_cores_mask);
 }
 
 /* Configure the DLBU for \a job. This needs to be done before the job is started on the groups in the DLBU. */

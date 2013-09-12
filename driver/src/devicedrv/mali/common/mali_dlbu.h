@@ -33,6 +33,14 @@ _mali_osk_errcode_t mali_dlbu_reset(struct mali_dlbu_core *dlbu);
 void mali_dlbu_add_group(struct mali_dlbu_core *dlbu, struct mali_group *group);
 void mali_dlbu_remove_group(struct mali_dlbu_core *dlbu, struct mali_group *group);
 
+/** @brief Called to update HW after DLBU state changed
+ *
+ * This function must be called after \a mali_dlbu_add_group or \a
+ * mali_dlbu_remove_group to write the updated mask to hardware, unless the
+ * same is accomplished by calling \a mali_dlbu_reset.
+ */
+void mali_dlbu_update_mask(struct mali_dlbu_core *dlbu);
+
 void mali_dlbu_config_job(struct mali_dlbu_core *dlbu, struct mali_pp_job *job);
 
 #endif /* __MALI_DLBU_H__ */

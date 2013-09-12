@@ -347,7 +347,7 @@ void mali_gp_update_performance_counters(struct mali_gp_core *core, struct mali_
 		mali_gp_job_set_perf_counter_value0(job, val0);
 
 #if defined(CONFIG_MALI400_PROFILING)
-		_mali_osk_profiling_report_hw_counter(COUNTER_VP_C0, val0);
+		_mali_osk_profiling_report_hw_counter(COUNTER_VP_0_C0, val0);
 #endif
 
 	}
@@ -358,7 +358,7 @@ void mali_gp_update_performance_counters(struct mali_gp_core *core, struct mali_
 		mali_gp_job_set_perf_counter_value1(job, val1);
 
 #if defined(CONFIG_MALI400_PROFILING)
-		_mali_osk_profiling_report_hw_counter(COUNTER_VP_C1, val1);
+		_mali_osk_profiling_report_hw_counter(COUNTER_VP_0_C1, val1);
 #endif
 	}
 }

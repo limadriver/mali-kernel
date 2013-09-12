@@ -34,7 +34,11 @@ enum mali_group_core_state
 	MALI_GROUP_STATE_IN_VIRTUAL,
 	MALI_GROUP_STATE_JOINING_VIRTUAL,
 	MALI_GROUP_STATE_LEAVING_VIRTUAL,
+	MALI_GROUP_STATE_DISABLED,
 };
+
+/* Forward declaration from mali_pm_domain.h */
+struct mali_pm_domain;
 
 /**
  * The structure represents a render group
@@ -71,6 +75,9 @@ struct mali_group
 	 * head element. */
 	_mali_osk_list_t            group_list;
 
+	struct mali_group           *pm_domain_list;
+	struct mali_pm_domain       *pm_domain;
+
 	/* Parent virtual group (if any) */
 	struct mali_group           *parent_group;
 
@@ -101,10 +108,12 @@ void mali_group_remove_gp_core(struct mali_group *group);
 _mali_osk_errcode_t mali_group_add_pp_core(struct mali_group *group, struct mali_pp_core* pp_core);
 void mali_group_remove_pp_core(struct mali_group *group);
 
+void mali_group_set_pm_domain(struct mali_group *group, struct mali_pm_domain *domain);
+
 void mali_group_delete(struct mali_group *group);
 
 /** @brief Virtual groups */
-void mali_group_add_group(struct mali_group *parent, struct mali_group *child);
+void mali_group_add_group(struct mali_group *parent, struct mali_group *child, mali_bool update_hw);
 void mali_group_remove_group(struct mali_group *parent, struct mali_group *child);
 struct mali_group *mali_group_acquire_group(struct mali_group *parent);
 
@@ -170,10 +179,10 @@ void mali_group_assert_locked(struct mali_group *group);
 
 /** @brief Start GP job
  */
-_mali_osk_errcode_t mali_group_start_gp_job(struct mali_group *group, struct mali_gp_job *job);
+void mali_group_start_gp_job(struct mali_group *group, struct mali_gp_job *job);
 /** @brief Start fragment of PP job
  */
-_mali_osk_errcode_t mali_group_start_pp_job(struct mali_group *group, struct mali_pp_job *job, u32 sub_job);
+void mali_group_start_pp_job(struct mali_group *group, struct mali_pp_job *job, u32 sub_job);
 
 /** @brief Resume GP job that suspended waiting for more heap memory
  */
@@ -189,9 +198,11 @@ void mali_group_abort_gp_job(struct mali_group *group, u32 job_id);
  */
 void mali_group_abort_session(struct mali_group *group, struct mali_session_data *session);
 
+mali_bool mali_group_power_is_on(struct mali_group *group);
+void mali_group_power_on_group(struct mali_group *group);
+void mali_group_power_off_group(struct mali_group *group);
 void mali_group_power_on(void);
 void mali_group_power_off(void);
-mali_bool mali_group_power_is_on(struct mali_group *group);
 
 struct mali_group *mali_group_get_glob_group(u32 index);
 u32 mali_group_get_glob_num_groups(void);
@@ -206,5 +217,67 @@ _mali_osk_errcode_t mali_group_upper_half_gp(void *data);
 
 /* PP-related functions */
 _mali_osk_errcode_t mali_group_upper_half_pp(void *data);
+
+/** @brief Check if group is enabled
+ *
+ * @param group group to check
+ * @return MALI_TRUE if enabled, MALI_FALSE if not
+ */
+mali_bool mali_group_is_enabled(struct mali_group *group);
+
+/** @brief Enable group
+ *
+ * An enabled job is put on the idle scheduler list and can be used to handle jobs.  Does nothing if
+ * group is already enabled.
+ *
+ * @param group group to enable
+ */
+void mali_group_enable(struct mali_group *group);
+
+/** @brief Disable group
+ *
+ * A disabled group will no longer be used by the scheduler.  If part of a virtual group, the group
+ * will be removed before being disabled.  Cores part of a disabled group is safe to power down.
+ *
+ * @param group group to disable
+ */
+void mali_group_disable(struct mali_group *group);
+
+MALI_STATIC_INLINE mali_bool mali_group_virtual_disable_if_empty(struct mali_group *group)
+{
+	mali_bool empty = MALI_FALSE;
+
+	MALI_ASSERT_GROUP_LOCKED(group);
+	MALI_DEBUG_ASSERT(mali_group_is_virtual(group));
+
+	if (_mali_osk_list_empty(&group->group_list))
+	{
+		group->state = MALI_GROUP_STATE_DISABLED;
+		group->session = NULL;
+
+		empty = MALI_TRUE;
+	}
+
+	return empty;
+}
+
+MALI_STATIC_INLINE mali_bool mali_group_virtual_enable_if_empty(struct mali_group *group)
+{
+	mali_bool empty = MALI_FALSE;
+
+	MALI_ASSERT_GROUP_LOCKED(group);
+	MALI_DEBUG_ASSERT(mali_group_is_virtual(group));
+
+	if (_mali_osk_list_empty(&group->group_list))
+	{
+		MALI_DEBUG_ASSERT(MALI_GROUP_STATE_DISABLED == group->state);
+
+		group->state = MALI_GROUP_STATE_IDLE;
+
+		empty = MALI_TRUE;
+	}
+
+	return empty;
+}
 
 #endif /* __MALI_GROUP_H__ */

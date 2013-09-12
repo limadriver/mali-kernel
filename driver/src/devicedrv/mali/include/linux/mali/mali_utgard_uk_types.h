@@ -507,6 +507,13 @@ typedef struct
     u32 perf_counter1[_MALI_PP_MAX_SUB_JOBS];  /**< [out] value of perfomance counter 1 (see ARM DDI0415A), one for each sub job */
 } _mali_uk_pp_job_finished_s;
 
+typedef struct
+{
+	u32 number_of_enabled_cores;               /**< [out] the new number of enabled cores */
+} _mali_uk_pp_num_cores_changed_s;
+
+
+
 /**
  * Flags to indicate write-back units
  */
@@ -556,6 +563,7 @@ typedef enum
 	/** Fragment Processor notifications */
 
 	_MALI_NOTIFICATION_PP_FINISHED =                (_MALI_UK_PP_SUBSYSTEM << 16) | 0x10,
+	_MALI_NOTIFICATION_PP_NUM_CORE_CHANGE =         (_MALI_UK_PP_SUBSYSTEM << 16) | 0x20,
 
 	/** Vertex Processor notifications */
 
@@ -713,7 +721,7 @@ typedef struct
  * The 16bit integer is stored twice in a 32bit integer
  * For example, for version 1 the value would be 0x00010001
  */
-#define _MALI_API_VERSION 20
+#define _MALI_API_VERSION 23
 #define _MALI_UK_API_VERSION _MAKE_VERSION_ID(_MALI_API_VERSION)
 
 /**
@@ -924,8 +932,9 @@ typedef struct
  */
 typedef struct
 {
-    void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
-    u32 number_of_cores;            /**< [out] number of Fragment Processor cores in the system */
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	u32 number_of_total_cores;      /**< [out] Total number of Fragment Processor cores in the system */
+	u32 number_of_enabled_cores;    /**< [out] Number of enabled Fragment Processor cores */
 } _mali_uk_get_pp_number_of_cores_s;
 
 /** @brief Arguments for _mali_ukk_get_pp_core_version()

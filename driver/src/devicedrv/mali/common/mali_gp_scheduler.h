@@ -41,4 +41,7 @@ void mali_gp_scheduler_reset_all_groups(void);
  */
 void mali_gp_scheduler_zap_all_active(struct mali_session_data *session);
 
+void mali_gp_scheduler_enable_group(struct mali_group *group);
+void mali_gp_scheduler_disable_group(struct mali_group *group);
+
 #endif /* __MALI_GP_SCHEDULER_H__ */

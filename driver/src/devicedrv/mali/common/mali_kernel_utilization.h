@@ -11,9 +11,10 @@
 #ifndef __MALI_KERNEL_UTILIZATION_H__
 #define __MALI_KERNEL_UTILIZATION_H__
 
+#include <linux/mali/mali_utgard.h>
 #include "mali_osk.h"
 
-extern void (*mali_utilization_callback)(unsigned int);
+extern void (*mali_utilization_callback)(struct mali_gpu_utilization_data *data);
 
 /**
  * Initialize/start the Mali GPU utilization metrics reporting.
@@ -36,18 +37,29 @@ MALI_STATIC_INLINE mali_bool mali_utilization_enabled(void)
 }
 
 /**
- * Should be called when a job is about to execute a job
+ * Should be called when a job is about to execute a GP job
  */
-void mali_utilization_core_start(u64 time_now);
+void mali_utilization_gp_start(void);
+
+/**
+ * Should be called when a job has completed executing a GP job
+ */
+void mali_utilization_gp_end(void);
+
+/**
+ * Should be called when a job is about to execute a PP job
+ */
+void mali_utilization_pp_start(void);
+
+/**
+ * Should be called when a job has completed executing a PP job
+ */
+void mali_utilization_pp_end(void);
 
 /**
  * Should be called to stop the utilization timer during system suspend
  */
 void mali_utilization_suspend(void);
 
-/**
- * Should be called when a job has completed executing a job
- */
-void mali_utilization_core_end(u64 time_now);
 
 #endif /* __MALI_KERNEL_UTILIZATION_H__ */

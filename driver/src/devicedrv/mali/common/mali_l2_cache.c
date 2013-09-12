@@ -12,6 +12,7 @@
 #include "mali_l2_cache.h"
 #include "mali_hw_core.h"
 #include "mali_scheduler.h"
+#include "mali_pm_domain.h"
 
 /**
  * Size of the Mali L2 cache registers in bytes
@@ -66,26 +67,9 @@ typedef enum mali_l2_cache_status
 	MALI400_L2_CACHE_STATUS_DATA_BUSY    = 0x02, /**< L2 cache is busy handling data requests */
 } mali_l2_cache_status;
 
-/**
- * Definition of the L2 cache core struct
- * Used to track a L2 cache unit in the system.
- * Contains information about the mapping of the registers
- */
-struct mali_l2_cache_core
-{
-	struct mali_hw_core  hw_core;      /**< Common for all HW cores */
-	u32                  core_id;      /**< Unique core ID */
-	_mali_osk_lock_t    *command_lock; /**< Serialize all L2 cache commands */
-	_mali_osk_lock_t    *counter_lock; /**< Synchronize L2 cache counter access */
-	u32                  counter_src0; /**< Performance counter 0, MALI_HW_CORE_NO_COUNTER for disabled */
-	u32                  counter_src1; /**< Performance counter 1, MALI_HW_CORE_NO_COUNTER for disabled */
-	u32                  last_invalidated_id;
-	mali_bool            power_is_enabled;
-};
-
 #define MALI400_L2_MAX_READS_DEFAULT 0x1C
 
-static struct mali_l2_cache_core *mali_global_l2_cache_cores[MALI_MAX_NUMBER_OF_L2_CACHE_CORES];
+static struct mali_l2_cache_core *mali_global_l2_cache_cores[MALI_MAX_NUMBER_OF_L2_CACHE_CORES] = { NULL, };
 static u32 mali_global_num_l2_cache_cores = 0;
 
 int mali_l2_max_reads = MALI400_L2_MAX_READS_DEFAULT;
@@ -119,6 +103,7 @@ struct mali_l2_cache_core *mali_l2_cache_create(_mali_osk_resource_t *resource)
 		cache->core_id =  mali_global_num_l2_cache_cores;
 		cache->counter_src0 = MALI_HW_CORE_NO_COUNTER;
 		cache->counter_src1 = MALI_HW_CORE_NO_COUNTER;
+		cache->pm_domain = NULL;
 		if (_MALI_OSK_ERR_OK == mali_hw_core_create(&cache->hw_core, resource, MALI400_L2_CACHE_REGISTERS_SIZE))
 		{
 			cache->command_lock = _mali_osk_lock_init(lock_flags, 0, _MALI_OSK_LOCK_ORDER_L2_COMMAND);
@@ -130,7 +115,6 @@ struct mali_l2_cache_core *mali_l2_cache_create(_mali_osk_resource_t *resource)
 					mali_l2_cache_reset(cache);
 
 					cache->last_invalidated_id = 0;
-					cache->power_is_enabled = MALI_TRUE;
 
 					mali_global_l2_cache_cores[mali_global_num_l2_cache_cores] = cache;
 					mali_global_num_l2_cache_cores++;
@@ -174,26 +158,26 @@ void mali_l2_cache_delete(struct mali_l2_cache_core *cache)
 	_mali_osk_lock_term(cache->command_lock);
 	mali_hw_core_delete(&cache->hw_core);
 
-	for (i = 0; i < MALI_MAX_NUMBER_OF_L2_CACHE_CORES; i++)
+	for (i = 0; i < mali_global_num_l2_cache_cores; i++)
 	{
 		if (mali_global_l2_cache_cores[i] == cache)
 		{
 			mali_global_l2_cache_cores[i] = NULL;
 			mali_global_num_l2_cache_cores--;
+
+			if (i != mali_global_num_l2_cache_cores)
+			{
+				/* We removed a l2 cache from the middle of the array -- move the last
+				 * l2 cache to the current position to close the gap */
+				mali_global_l2_cache_cores[i] = mali_global_l2_cache_cores[mali_global_num_l2_cache_cores];
+				mali_global_l2_cache_cores[mali_global_num_l2_cache_cores] = NULL;
+			}
+
+			break;
 		}
 	}
 
 	_mali_osk_free(cache);
-}
-
-void mali_l2_cache_power_is_enabled_set(struct mali_l2_cache_core * core, mali_bool power_is_enabled)
-{
-       core->power_is_enabled = power_is_enabled;
-}
-
-mali_bool mali_l2_cache_power_is_enabled_get(struct mali_l2_cache_core * core)
-{
-       return core->power_is_enabled;
 }
 
 u32 mali_l2_cache_get_id(struct mali_l2_cache_core *cache)
@@ -300,7 +284,7 @@ void mali_l2_cache_core_get_counter_values(struct mali_l2_cache_core *cache, u32
 
 struct mali_l2_cache_core *mali_l2_cache_core_get_glob_l2_core(u32 index)
 {
-	if (MALI_MAX_NUMBER_OF_L2_CACHE_CORES > index)
+	if (mali_global_num_l2_cache_cores > index)
 	{
 		return mali_global_l2_cache_cores[index];
 	}
@@ -316,7 +300,7 @@ u32 mali_l2_cache_core_get_glob_num_l2_cores(void)
 void mali_l2_cache_reset(struct mali_l2_cache_core *cache)
 {
 	/* Invalidate cache (just to keep it in a known state at startup) */
-	mali_l2_cache_invalidate_all(cache);
+	mali_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_COMMAND, MALI400_L2_CACHE_COMMAND_CLEAR_ALL);
 
 	/* Enable cache */
 	mali_hw_core_register_write(&cache->hw_core, MALI400_L2_CACHE_REGISTER_ENABLE, (u32)MALI400_L2_CACHE_ENABLE_ACCESS | (u32)MALI400_L2_CACHE_ENABLE_READ_ALLOCATE);
@@ -349,89 +333,94 @@ void mali_l2_cache_reset_all(void)
 	}
 }
 
-_mali_osk_errcode_t mali_l2_cache_invalidate_all(struct mali_l2_cache_core *cache)
+void mali_l2_cache_invalidate(struct mali_l2_cache_core *cache)
 {
-	return mali_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_COMMAND, MALI400_L2_CACHE_COMMAND_CLEAR_ALL);
+	MALI_DEBUG_ASSERT_POINTER(cache);
+
+	if (NULL != cache)
+	{
+		cache->last_invalidated_id = mali_scheduler_get_new_id();
+		mali_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_COMMAND, MALI400_L2_CACHE_COMMAND_CLEAR_ALL);
+	}
 }
 
-mali_bool mali_l2_cache_invalidate_all_conditional(struct mali_l2_cache_core *cache, u32 id)
+mali_bool mali_l2_cache_invalidate_conditional(struct mali_l2_cache_core *cache, u32 id)
 {
-       MALI_DEBUG_ASSERT_POINTER(cache);
+	MALI_DEBUG_ASSERT_POINTER(cache);
 
-       if (NULL != cache)
-       {
-               /* If the last cache invalidation was done by a job with a higher id we
-                * don't have to flush. Since user space will store jobs w/ their
-                * corresponding memory in sequence (first job #0, then job #1, ...),
-                * we don't have to flush for job n-1 if job n has already invalidated
-                * the cache since we know for sure that job n-1's memory was already
-                * written when job n was started. */
-               if (((s32)id) <= ((s32)cache->last_invalidated_id))
-               {
-                       return MALI_FALSE;
-               }
-               else
-               {
-                       cache->last_invalidated_id = mali_scheduler_get_new_id();
-               }
+	if (NULL != cache)
+	{
+		/* If the last cache invalidation was done by a job with a higher id we
+		 * don't have to flush. Since user space will store jobs w/ their
+		 * corresponding memory in sequence (first job #0, then job #1, ...),
+		 * we don't have to flush for job n-1 if job n has already invalidated
+		 * the cache since we know for sure that job n-1's memory was already
+		 * written when job n was started. */
+		if (((s32)id) <= ((s32)cache->last_invalidated_id))
+		{
+			return MALI_FALSE;
+		}
+		else
+		{
+			cache->last_invalidated_id = mali_scheduler_get_new_id();
+		}
 
-               mali_l2_cache_invalidate_all(cache);
-       }
-       return MALI_TRUE;
+		mali_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_COMMAND, MALI400_L2_CACHE_COMMAND_CLEAR_ALL);
+	}
+	return MALI_TRUE;
 }
 
-void mali_l2_cache_invalidate_all_force(struct mali_l2_cache_core *cache)
-{
-       MALI_DEBUG_ASSERT_POINTER(cache);
-
-       if (NULL != cache)
-       {
-               cache->last_invalidated_id = mali_scheduler_get_new_id();
-               mali_l2_cache_invalidate_all(cache);
-       }
-}
-
-_mali_osk_errcode_t mali_l2_cache_invalidate_pages(struct mali_l2_cache_core *cache, u32 *pages, u32 num_pages)
+void mali_l2_cache_invalidate_all(void)
 {
 	u32 i;
-	_mali_osk_errcode_t ret1, ret = _MALI_OSK_ERR_OK;
-
-	for (i = 0; i < num_pages; i++)
+	for (i = 0; i < mali_global_num_l2_cache_cores; i++)
 	{
-		ret1 = mali_l2_cache_send_command(cache, MALI400_L2_CACHE_REGISTER_CLEAR_PAGE, pages[i]);
-		if (_MALI_OSK_ERR_OK != ret1)
+		/*additional check*/
+		if (MALI_TRUE == mali_l2_cache_lock_power_state(mali_global_l2_cache_cores[i]))
 		{
-			ret = ret1;
+			_mali_osk_errcode_t ret;
+			mali_global_l2_cache_cores[i]->last_invalidated_id = mali_scheduler_get_new_id();
+			ret = mali_l2_cache_send_command(mali_global_l2_cache_cores[i], MALI400_L2_CACHE_REGISTER_COMMAND, MALI400_L2_CACHE_COMMAND_CLEAR_ALL);
+			if (_MALI_OSK_ERR_OK != ret)
+			{
+				MALI_PRINT_ERROR(("Failed to invalidate cache\n"));
+			}
 		}
+		mali_l2_cache_unlock_power_state(mali_global_l2_cache_cores[i]);
 	}
-
-	return ret;
 }
 
-void mali_l2_cache_invalidate_pages_conditional(u32 *pages, u32 num_pages)
+void mali_l2_cache_invalidate_all_pages(u32 *pages, u32 num_pages)
 {
-       u32 i;
-
-       for (i = 0; i < mali_global_num_l2_cache_cores; i++)
-       {
-               /*additional check*/
-               if (MALI_TRUE == mali_l2_cache_lock_power_state(mali_global_l2_cache_cores[i]))
-               {
-                       mali_l2_cache_invalidate_pages(mali_global_l2_cache_cores[i], pages, num_pages);
-               }
-               mali_l2_cache_unlock_power_state(mali_global_l2_cache_cores[i]);
-               /*check for failed power locking???*/
-       }
+	u32 i;
+	for (i = 0; i < mali_global_num_l2_cache_cores; i++)
+	{
+		/*additional check*/
+		if (MALI_TRUE == mali_l2_cache_lock_power_state(mali_global_l2_cache_cores[i]))
+		{
+			u32 j;
+			for (j = 0; j < num_pages; j++)
+			{
+				_mali_osk_errcode_t ret;
+				ret = mali_l2_cache_send_command(mali_global_l2_cache_cores[i], MALI400_L2_CACHE_REGISTER_CLEAR_PAGE, pages[j]);
+				if (_MALI_OSK_ERR_OK != ret)
+				{
+					MALI_PRINT_ERROR(("Failed to invalidate page cache\n"));
+				}
+			}
+		}
+		mali_l2_cache_unlock_power_state(mali_global_l2_cache_cores[i]);
+	}
 }
 
 mali_bool mali_l2_cache_lock_power_state(struct mali_l2_cache_core *cache)
 {
-	return _mali_osk_pm_dev_ref_add_no_power_on();
+	return mali_pm_domain_lock_state(cache->pm_domain);
 }
 
 void mali_l2_cache_unlock_power_state(struct mali_l2_cache_core *cache)
 {
-	_mali_osk_pm_dev_ref_dec_no_power_on();
+	return mali_pm_domain_unlock_state(cache->pm_domain);
 }
 
 /* -------- local helper functions below -------- */

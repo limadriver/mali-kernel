@@ -22,20 +22,12 @@
 static void *mali_sman_mm_allocate( void *private, unsigned long size, unsigned alignment )
 {
 	printk(KERN_ERR "DRM: %s\n", __func__);
-	//struct mali_memreq req;
-
-	//req.size = size;
-	/* XXX _ump_ukk_allocate( _ump_uk_allocate_s *user_interaction ); */
-	//if (req.size == 0) return NULL;
-	//else return (void *)(unsigned long)~req.offset;
 	return NULL;
 }
 
 static void mali_sman_mm_free( void *private, void *ref )
 {
 	printk(KERN_ERR "DRM: %s\n", __func__);
-	/*ump_free(~((unsigned long)ref));*/
-
 }
 
 static void mali_sman_mm_destroy( void *private )
@@ -104,7 +96,7 @@ static int mali_drm_alloc(struct drm_device *dev, struct drm_file *file_priv, vo
 			      (unsigned long)file_priv);
 
 	mutex_unlock(&dev->struct_mutex);
-	if (item) 
+	if (item)
 	{
 		mem->offset = dev_priv->vram_offset + (item->mm->offset(item->mm, item->mm_info) << MALI_MM_ALIGN_SHIFT);
 		mem->free = item->user_hash.key;
@@ -159,11 +151,8 @@ static int mali_ioctl_mem_init(struct drm_device *dev, void *data, struct drm_fi
 		return ret;
 	}
 
-	//dev_priv->agp_initialized = 1;
-	//dev_priv->agp_offset = agp->offset;
 	mutex_unlock(&dev->struct_mutex);
 
-	//DRM_DEBUG("offset = %u, size = %u\n", agp->offset, agp->size);
 	return 0;
 }
 
@@ -203,16 +192,6 @@ int mali_idle(struct drm_device *dev)
 	if (dev_priv->idle_fault)
 		return 0;
 
-	#if 0
-	if (dev_priv->mmio == NULL) {
-		dev_priv->mmio = mali_reg_init(dev);
-		if (dev_priv->mmio == NULL) {
-			DRM_ERROR("Could not find register map.\n");
-			return 0;
-		}
-	}
-	#endif
-
 	return 0;
 }
 
@@ -237,13 +216,13 @@ void mali_reclaim_buffers_locked(struct drm_device * dev, struct drm_file *file_
 	printk(KERN_ERR "DRM: %s\n", __func__);
 
 	mutex_lock(&dev->struct_mutex);
-	if (drm_sman_owner_clean(&dev_priv->sman, (unsigned long)file_priv)) 
+	if (drm_sman_owner_clean(&dev_priv->sman, (unsigned long)file_priv))
 	{
 		mutex_unlock(&dev->struct_mutex);
 		return;
 	}
 
-	if (dev->driver->dma_quiescent) 
+	if (dev->driver->dma_quiescent)
 	{
 		dev->driver->dma_quiescent(dev);
 	}

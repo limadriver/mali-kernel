@@ -15,6 +15,7 @@
 
 #include "mali_linux_trace.h"
 #include "mali_profiling_events.h"
+#include "mali_profiling_gator_api.h"
 
 #define MALI_PROFILING_MAX_BUFFER_ENTRIES 1048576
 

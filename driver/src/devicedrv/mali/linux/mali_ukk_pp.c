@@ -39,19 +39,27 @@ int pp_start_job_wrapper(struct mali_session_data *session_data, _mali_uk_pp_sta
 
 int pp_get_number_of_cores_wrapper(struct mali_session_data *session_data, _mali_uk_get_pp_number_of_cores_s __user *uargs)
 {
-    _mali_uk_get_pp_number_of_cores_s kargs;
-    _mali_osk_errcode_t err;
+	_mali_uk_get_pp_number_of_cores_s kargs;
+	_mali_osk_errcode_t err;
 
-    MALI_CHECK_NON_NULL(uargs, -EINVAL);
-    MALI_CHECK_NON_NULL(session_data, -EINVAL);
+	MALI_CHECK_NON_NULL(uargs, -EINVAL);
+	MALI_CHECK_NON_NULL(session_data, -EINVAL);
 
-    kargs.ctx = session_data;
-    err = _mali_ukk_get_pp_number_of_cores(&kargs);
-    if (_MALI_OSK_ERR_OK != err) return map_errcode(err);
+	kargs.ctx = session_data;
 
-    if (0 != put_user(kargs.number_of_cores, &uargs->number_of_cores)) return -EFAULT;
+	err = _mali_ukk_get_pp_number_of_cores(&kargs);
+	if (_MALI_OSK_ERR_OK != err)
+	{
+		return map_errcode(err);
+	}
 
-    return 0;
+	kargs.ctx = NULL; /* prevent kernel address to be returned to user space */
+	if (0 != copy_to_user(uargs, &kargs, sizeof(_mali_uk_get_pp_number_of_cores_s)))
+	{
+		return -EFAULT;
+	}
+
+	return 0;
 }
 
 int pp_get_core_version_wrapper(struct mali_session_data *session_data, _mali_uk_get_pp_core_version_s __user *uargs)

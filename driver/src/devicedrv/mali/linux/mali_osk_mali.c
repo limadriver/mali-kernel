@@ -101,7 +101,8 @@ _mali_osk_errcode_t _mali_osk_device_data_get(struct _mali_osk_device_data *data
 			data->fb_start = os_data->fb_start;
 			data->fb_size = os_data->fb_size;
 			data->utilization_interval = os_data->utilization_interval;
-			data->utilization_handler = os_data->utilization_handler;
+			data->utilization_callback = os_data->utilization_callback;
+			data->pmu_switch_delay = os_data->pmu_switch_delay;
 			return _MALI_OSK_ERR_OK;
 		}
 	}

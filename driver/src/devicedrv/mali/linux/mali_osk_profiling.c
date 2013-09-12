@@ -10,6 +10,7 @@
 
 #include <linux/module.h>
 
+#include <mali_profiling_gator_api.h>
 #include "mali_kernel_common.h"
 #include "mali_osk.h"
 #include "mali_ukk.h"
@@ -18,6 +19,7 @@
 #include "mali_linux_trace.h"
 #include "mali_gp.h"
 #include "mali_pp.h"
+#include "mali_pp_scheduler.h"
 #include "mali_l2_cache.h"
 #include "mali_user_settings_db.h"
 
@@ -125,59 +127,48 @@ _mali_osk_errcode_t _mali_ukk_sw_counters_report(_mali_uk_sw_counters_report_s *
  */
 int _mali_profiling_set_event(u32 counter_id, s32 event_id)
 {
-	if (COUNTER_VP_C0 == counter_id)
+	if (COUNTER_VP_0_C0 == counter_id)
 	{
 		if (MALI_TRUE == mali_gp_job_set_gp_counter_src0(event_id))
 		{
 			return 1;
 		}
 	}
-	if (COUNTER_VP_C1 == counter_id)
+
+	if (COUNTER_VP_0_C1 == counter_id)
 	{
 		if (MALI_TRUE == mali_gp_job_set_gp_counter_src1(event_id))
 		{
 			return 1;
 		}
 	}
-	if (COUNTER_FP0_C0 <= counter_id && COUNTER_FP3_C1 >= counter_id)
-	{
-		u32 core_id = (counter_id - COUNTER_FP0_C0) >> 1;
-		struct mali_pp_core* pp_core = mali_pp_get_global_pp_core(core_id);
 
-		if (NULL != pp_core)
+	if (COUNTER_FP_0_C0 == counter_id)
+	{
+		if (MALI_TRUE == mali_pp_job_set_pp_counter_src0(event_id))
 		{
-			if ((COUNTER_FP0_C0 == counter_id) || (COUNTER_FP0_C1 == counter_id))
-			{
-				u32 counter_src = (counter_id - COUNTER_FP0_C0) & 1;
-				if (0 == counter_src)
-				{
-					if (MALI_TRUE == mali_pp_job_set_pp_counter_src0(event_id))
-					{
-						return 1;
-					}
-				}
-				else
-				{
-					if (MALI_TRUE == mali_pp_job_set_pp_counter_src1(event_id))
-					{
-					MALI_DEBUG_PRINT(5, ("MALI PROFILING SET EVENT core 0 counter_id = %d\n",counter_id));
-					return 1;
-					}
-				}
-			}
+			return 1;
 		}
 	}
-	if (COUNTER_L2_C0 <= counter_id && COUNTER_L2_C1 >= counter_id)
+
+	if (COUNTER_FP_0_C1 == counter_id)
 	{
-		u32 core_id = (counter_id - COUNTER_L2_C0) >> 1;
+		if (MALI_TRUE == mali_pp_job_set_pp_counter_src1(event_id))
+		{
+			return 1;
+		}
+	}
+
+	if (COUNTER_L2_0_C0 <= counter_id && COUNTER_L2_2_C1 >= counter_id)
+	{
+		u32 core_id = (counter_id - COUNTER_L2_0_C0) >> 1;
 		struct mali_l2_cache_core* l2_cache_core = mali_l2_cache_core_get_glob_l2_core(core_id);
 
 		if (NULL != l2_cache_core)
 		{
-			u32 counter_src = (counter_id - COUNTER_L2_C0) & 1;
+			u32 counter_src = (counter_id - COUNTER_L2_0_C0) & 1;
 			if (0 == counter_src)
 			{
-				MALI_DEBUG_PRINT(5, ("SET EVENT L2 0 COUNTER\n"));
 				if (MALI_TRUE == mali_l2_cache_core_set_counter_src0(l2_cache_core, event_id))
 				{
 					return 1;
@@ -185,7 +176,6 @@ int _mali_profiling_set_event(u32 counter_id, s32 event_id)
 			}
 			else
 			{
-				MALI_DEBUG_PRINT(5, ("SET EVENT L2 1 COUNTER\n"));
 				if (MALI_TRUE == mali_l2_cache_core_set_counter_src1(l2_cache_core, event_id))
 				{
 					return 1;
@@ -198,38 +188,51 @@ int _mali_profiling_set_event(u32 counter_id, s32 event_id)
 }
 
 /**
- * Called by gator.ko to retrieve the L2 cache counter values for the first L2 cache. 
+ * Called by gator.ko to retrieve the L2 cache counter values for all L2 cache cores.
  * The L2 cache counters are unique in that they are polled by gator, rather than being
- * transmitted via the tracepoint mechanism. 
+ * transmitted via the tracepoint mechanism.
  *
- * @param src0 First L2 cache counter ID.
- * @param val0 First L2 cache counter value.
- * @param src1 Second L2 cache counter ID.
- * @param val1 Second L2 cache counter value.
+ * @param values Pointer to a _mali_profiling_l2_counter_values structure where
+ *               the counter sources and values will be output
+ * @return 0 if all went well; otherwise, return the mask with the bits set for the powered off cores
  */
-void _mali_profiling_get_counters(u32 *src0, u32 *val0, u32 *src1, u32 *val1)
+u32 _mali_profiling_get_l2_counters(_mali_profiling_l2_counter_values *values)
 {
-	 struct mali_l2_cache_core *l2_cache = mali_l2_cache_core_get_glob_l2_core(0);
-	 if (NULL != l2_cache)
-	 {
+	struct mali_l2_cache_core *l2_cache;
+	u32 l2_cores_num = mali_l2_cache_core_get_glob_num_l2_cores();
+	u32 i;
+	u32 ret = 0;
+
+	MALI_DEBUG_ASSERT(l2_cores_num <= 3);
+
+	for (i = 0; i < l2_cores_num; i++)
+	{
+		l2_cache = mali_l2_cache_core_get_glob_l2_core(i);
+
+		if (NULL == l2_cache)
+		{
+			continue;
+		}
+
 		if (MALI_TRUE == mali_l2_cache_lock_power_state(l2_cache))
 		{
 			/* It is now safe to access the L2 cache core in order to retrieve the counters */
-			mali_l2_cache_core_get_counter_values(l2_cache, src0, val0, src1, val1);
+			mali_l2_cache_core_get_counter_values(l2_cache,
+							      &values->cores[i].source0,
+							      &values->cores[i].value0,
+							      &values->cores[i].source1,
+							      &values->cores[i].value1);
+		}
+		else
+		{
+			/* The core was not available, set the right bit in the mask. */
+			ret |= (1 << i);
 		}
 		mali_l2_cache_unlock_power_state(l2_cache);
-	 }
-}
+	}
 
-/*
- * List of possible actions to be controlled by Streamline.
- * The following numbers are used by gator to control the frame buffer dumping and s/w counter reporting.
- * We cannot use the enums in mali_uk_types.h because they are unknown inside gator.
- */
-#define FBDUMP_CONTROL_ENABLE (1)
-#define FBDUMP_CONTROL_RATE (2)
-#define SW_COUNTER_ENABLE (3)
-#define FBDUMP_CONTROL_RESIZE_FACTOR (4)
+	return ret;
+}
 
 /**
  * Called by gator to control the production of profiling information at runtime.
@@ -255,6 +258,30 @@ void _mali_profiling_control(u32 action, u32 value)
 	}
 }
 
+/**
+ * Called by gator to get mali api version.
+ */
+u32 _mali_profiling_get_api_version(void)
+{
+	return MALI_PROFILING_API_VERSION;
+}
+
+/**
+* Called by gator to get the data about Mali instance in use:
+* product id, version, number of cores
+*/
+void _mali_profiling_get_mali_version(struct _mali_profiling_mali_version *values)
+{
+	values->mali_product_id = (u32)mali_kernel_core_get_product_id();
+	values->mali_version_major = mali_kernel_core_get_gpu_major_version();
+	values->mali_version_minor = mali_kernel_core_get_gpu_minor_version();
+	values->num_of_l2_cores = mali_l2_cache_core_get_glob_num_l2_cores();
+	values->num_of_fp_cores = mali_pp_scheduler_get_num_cores_total();
+	values->num_of_vp_cores = 1;
+}
+
 EXPORT_SYMBOL(_mali_profiling_set_event);
-EXPORT_SYMBOL(_mali_profiling_get_counters);
+EXPORT_SYMBOL(_mali_profiling_get_l2_counters);
 EXPORT_SYMBOL(_mali_profiling_control);
+EXPORT_SYMBOL(_mali_profiling_get_api_version);
+EXPORT_SYMBOL(_mali_profiling_get_mali_version);

@@ -101,3 +101,10 @@ void _mali_osk_pm_dev_ref_dec_no_power_on(void)
 	MALI_DEBUG_PRINT(4, ("Mali OSK PM: No-power ref released (%u)\n", _mali_osk_atomic_read(&mali_pm_ref_count)));
 #endif
 }
+
+void _mali_osk_pm_dev_barrier(void)
+{
+#ifdef CONFIG_PM_RUNTIME
+	pm_runtime_barrier(&(mali_platform_device->dev));
+#endif
+}

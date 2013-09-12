@@ -28,12 +28,16 @@
 #include <linux/debugfs.h>
 #include <asm/uaccess.h>
 #include <linux/module.h>
+#include <linux/mali/mali_utgard.h>
 #include "mali_kernel_sysfs.h"
 #if defined(CONFIG_MALI400_INTERNAL_PROFILING)
 #include <linux/slab.h>
 #include "mali_osk_profiling.h"
 #endif
+
+#include <linux/mali/mali_utgard.h>
 #include "mali_pm.h"
+#include "mali_pmu.h"
 #include "mali_group.h"
 #include "mali_gp.h"
 #include "mali_pp.h"
@@ -41,10 +45,10 @@
 #include "mali_hw_core.h"
 #include "mali_kernel_core.h"
 #include "mali_user_settings_db.h"
-#include "mali_device_pause_resume.h"
 #include "mali_profiling_internal.h"
 #include "mali_gp_job.h"
 #include "mali_pp_job.h"
+#include "mali_pp_scheduler.h"
 
 #define POWER_BUFFER_SIZE 3
 
@@ -66,9 +70,6 @@ static const char* const mali_power_events[_MALI_MAX_EVENTS] = {
         [_MALI_DEVICE_DVFS_RESUME] = "dvfs_resume",
 };
 
-static u32 virtual_power_status_register = 0;
-static char pwr_buf[POWER_BUFFER_SIZE];
-
 static mali_bool power_always_on_enabled = MALI_FALSE;
 
 static int open_copy_private_data(struct inode *inode, struct file *filp)
@@ -76,6 +77,91 @@ static int open_copy_private_data(struct inode *inode, struct file *filp)
 	filp->private_data = inode->i_private;
 	return 0;
 }
+
+static ssize_t group_enabled_read(struct file *filp, char __user *buf, size_t count, loff_t *offp)
+{
+	int r;
+	char buffer[64];
+	struct mali_group *group;
+
+	group = (struct mali_group *)filp->private_data;
+	MALI_DEBUG_ASSERT_POINTER(group);
+
+	r = sprintf(buffer, "%u\n", mali_group_is_enabled(group) ? 1 : 0);
+
+	return simple_read_from_buffer(buf, count, offp, buffer, r);
+}
+
+static ssize_t group_enabled_write(struct file *filp, const char __user *buf, size_t count, loff_t *offp)
+{
+	int r;
+	char buffer[64];
+	unsigned long val;
+	struct mali_group *group;
+
+	group = (struct mali_group *)filp->private_data;
+	MALI_DEBUG_ASSERT_POINTER(group);
+
+	if (count >= sizeof(buffer))
+	{
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(&buffer[0], buf, count))
+	{
+		return -EFAULT;
+	}
+	buffer[count] = '\0';
+
+	r = strict_strtoul(&buffer[0], 10, &val);
+	if (0 != r)
+	{
+		return -EINVAL;
+	}
+
+	switch (val)
+	{
+	case 1:
+		mali_group_enable(group);
+		break;
+	case 0:
+		mali_group_disable(group);
+		break;
+	default:
+		return -EINVAL;
+		break;
+	}
+
+	*offp += count;
+	return count;
+}
+
+static const struct file_operations group_enabled_fops = {
+	.owner = THIS_MODULE,
+	.open  = open_copy_private_data,
+	.read = group_enabled_read,
+	.write = group_enabled_write,
+};
+
+static ssize_t hw_core_base_addr_read(struct file *filp, char __user *buf, size_t count, loff_t *offp)
+{
+	int r;
+	char buffer[64];
+	struct mali_hw_core *hw_core;
+
+	hw_core = (struct mali_hw_core *)filp->private_data;
+	MALI_DEBUG_ASSERT_POINTER(hw_core);
+
+	r = sprintf(buffer, "0x%08X\n", hw_core->phys_addr);
+
+	return simple_read_from_buffer(buf, count, offp, buffer, r);
+}
+
+static const struct file_operations hw_core_base_addr_fops = {
+	.owner = THIS_MODULE,
+	.open  = open_copy_private_data,
+	.read = hw_core_base_addr_read,
+};
 
 static ssize_t gp_gpx_counter_srcx_read(struct file *filp, char __user *ubuf, size_t cnt, loff_t *gpos, u32 src_id)
 {
@@ -707,47 +793,22 @@ static ssize_t power_power_events_write(struct file *filp, const char __user *ub
 	if (!strncmp(ubuf,mali_power_events[_MALI_DEVICE_SUSPEND],strlen(mali_power_events[_MALI_DEVICE_SUSPEND])))
 	{
 		mali_pm_os_suspend();
-		/* @@@@ assuming currently suspend is successful later on to tune as per previous*/
-		virtual_power_status_register =1;
 
 	}
 	else if (!strncmp(ubuf,mali_power_events[_MALI_DEVICE_RESUME],strlen(mali_power_events[_MALI_DEVICE_RESUME])))
 	{
 		mali_pm_os_resume();
-
-		/* @@@@ assuming currently resume is successful later on to tune as per previous */
-		virtual_power_status_register = 1;
 	}
 	else if (!strncmp(ubuf,mali_power_events[_MALI_DEVICE_DVFS_PAUSE],strlen(mali_power_events[_MALI_DEVICE_DVFS_PAUSE])))
 	{
-		mali_bool power_on;
-		mali_dev_pause(&power_on);
-		if (!power_on)
-		{
-			virtual_power_status_register = 2;
-			mali_dev_resume();		
-		}
-		else
-		{
-			/*  @@@@ assuming currently resume is successful later on to tune as per previous */
-			virtual_power_status_register =1;
-		}
+		mali_dev_pause();
 	}
 	else if (!strncmp(ubuf,mali_power_events[_MALI_DEVICE_DVFS_RESUME],strlen(mali_power_events[_MALI_DEVICE_DVFS_RESUME])))
 	{
 		mali_dev_resume();
-		/*  @@@@ assuming currently resume is successful later on to tune as per previous */
-		virtual_power_status_register = 1;
-                
 	}
 	*ppos += cnt;
-	sprintf(pwr_buf, "%d",virtual_power_status_register);
 	return cnt;
-}
-
-static ssize_t power_power_events_read(struct file *filp, char __user *ubuf, size_t cnt, loff_t *ppos)
-{
-	return simple_read_from_buffer(ubuf, cnt, ppos, pwr_buf, POWER_BUFFER_SIZE);
 }
 
 static loff_t power_power_events_seek(struct file *file, loff_t offset, int orig)
@@ -758,7 +819,6 @@ static loff_t power_power_events_seek(struct file *file, loff_t offset, int orig
 
 static const struct file_operations power_power_events_fops = {
 	.owner = THIS_MODULE,
-	.read  = power_power_events_read,
 	.write = power_power_events_write,
 	.llseek = power_power_events_seek,
 };
@@ -1244,6 +1304,189 @@ static int mali_sysfs_user_settings_register(void)
 	return 0;
 }
 
+static ssize_t pmu_power_down_write(struct file *filp, const char __user *buf, size_t count, loff_t *offp)
+{
+	int ret;
+	char buffer[32];
+	unsigned long val;
+	struct mali_pmu_core *pmu;
+	_mali_osk_errcode_t err;
+
+	if (count >= sizeof(buffer))
+	{
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(&buffer[0], buf, count))
+	{
+		return -EFAULT;
+	}
+	buffer[count] = '\0';
+
+	ret = strict_strtoul(&buffer[0], 10, &val);
+	if (0 != ret)
+	{
+		return -EINVAL;
+	}
+
+	pmu = mali_pmu_get_global_pmu_core();
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+
+	err = mali_pmu_power_down(pmu, val);
+	if (_MALI_OSK_ERR_OK != err)
+	{
+		return -EINVAL;
+	}
+
+	*offp += count;
+	return count;
+}
+
+static ssize_t pmu_power_up_write(struct file *filp, const char __user *buf, size_t count, loff_t *offp)
+{
+	int ret;
+	char buffer[32];
+	unsigned long val;
+	struct mali_pmu_core *pmu;
+	_mali_osk_errcode_t err;
+
+	if (count >= sizeof(buffer))
+	{
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(&buffer[0], buf, count))
+	{
+		return -EFAULT;
+	}
+	buffer[count] = '\0';
+
+	ret = strict_strtoul(&buffer[0], 10, &val);
+	if (0 != ret)
+	{
+		return -EINVAL;
+	}
+
+	pmu = mali_pmu_get_global_pmu_core();
+	MALI_DEBUG_ASSERT_POINTER(pmu);
+
+	err = mali_pmu_power_up(pmu, val);
+	if (_MALI_OSK_ERR_OK != err)
+	{
+		return -EINVAL;
+	}
+
+	*offp += count;
+	return count;
+}
+
+static const struct file_operations pmu_power_down_fops = {
+	.owner = THIS_MODULE,
+	.write = pmu_power_down_write,
+};
+
+static const struct file_operations pmu_power_up_fops = {
+	.owner = THIS_MODULE,
+	.write = pmu_power_up_write,
+};
+
+static ssize_t pp_num_cores_enabled_write(struct file *filp, const char __user *buf, size_t count, loff_t *offp)
+{
+	int ret;
+	char buffer[32];
+	unsigned long val;
+
+	if (count >= sizeof(buffer))
+	{
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(&buffer[0], buf, count))
+	{
+		return -EFAULT;
+	}
+	buffer[count] = '\0';
+
+	ret = strict_strtoul(&buffer[0], 10, &val);
+	if (0 != ret)
+	{
+		return -EINVAL;
+	}
+
+	ret = mali_perf_set_num_pp_cores(val);
+	if (ret)
+	{
+		return ret;
+	}
+
+	*offp += count;
+	return count;
+}
+
+static ssize_t pp_num_cores_enabled_read(struct file *filp, char __user *buf, size_t count, loff_t *offp)
+{
+	int r;
+	char buffer[64];
+
+	r = sprintf(buffer, "%u\n", mali_pp_scheduler_get_num_cores_enabled());
+
+	return simple_read_from_buffer(buf, count, offp, buffer, r);
+}
+
+static const struct file_operations pp_num_cores_enabled_fops = {
+	.owner = THIS_MODULE,
+	.write = pp_num_cores_enabled_write,
+	.read = pp_num_cores_enabled_read,
+};
+
+static ssize_t pp_num_cores_total_read(struct file *filp, char __user *buf, size_t count, loff_t *offp)
+{
+	int r;
+	char buffer[64];
+
+	r = sprintf(buffer, "%u\n", mali_pp_scheduler_get_num_cores_total());
+
+	return simple_read_from_buffer(buf, count, offp, buffer, r);
+}
+
+static const struct file_operations pp_num_cores_total_fops = {
+	.owner = THIS_MODULE,
+	.read = pp_num_cores_total_read,
+};
+
+
+static ssize_t version_read(struct file *filp, char __user *buf, size_t count, loff_t *offp)
+{
+	int r = 0;
+	char buffer[64];
+
+	switch (mali_kernel_core_get_product_id())
+	{
+	case _MALI_PRODUCT_ID_MALI200:
+		r = sprintf(buffer, "Mali-200\n");
+		break;
+	case _MALI_PRODUCT_ID_MALI300:
+		r = sprintf(buffer, "Mali-300\n");
+		break;
+	case _MALI_PRODUCT_ID_MALI400:
+		r = sprintf(buffer, "Mali-400 MP\n");
+		break;
+	case _MALI_PRODUCT_ID_MALI450:
+		r = sprintf(buffer, "Mali-450 MP\n");
+		break;
+	case _MALI_PRODUCT_ID_UNKNOWN:
+		return -EINVAL;
+		break;
+	};
+
+	return simple_read_from_buffer(buf, count, offp, buffer, r);
+}
+
+static const struct file_operations version_fops = {
+	.owner = THIS_MODULE,
+	.read = version_read,
+};
+
 int mali_sysfs_register(const char *mali_dev_name)
 {
 	mali_debugfs_dir = debugfs_create_dir(mali_dev_name, NULL);
@@ -1257,6 +1500,7 @@ int mali_sysfs_register(const char *mali_dev_name)
 		if(NULL != mali_debugfs_dir)
 		{
 			/* Debugfs directory created successfully; create files now */
+			struct dentry *mali_pmu_dir;
 			struct dentry *mali_power_dir;
 			struct dentry *mali_gp_dir;
 			struct dentry *mali_pp_dir;
@@ -1265,11 +1509,20 @@ int mali_sysfs_register(const char *mali_dev_name)
 			struct dentry *mali_profiling_dir;
 #endif
 
+			debugfs_create_file("version", 0400, mali_debugfs_dir, NULL, &version_fops);
+
+			mali_pmu_dir = debugfs_create_dir("pmu", mali_debugfs_dir);
+			if (NULL != mali_pmu_dir)
+			{
+				debugfs_create_file("power_down", 0200, mali_pmu_dir, NULL, &pmu_power_down_fops);
+				debugfs_create_file("power_up", 0200, mali_pmu_dir, NULL, &pmu_power_up_fops);
+			}
+
 			mali_power_dir = debugfs_create_dir("power", mali_debugfs_dir);
 			if (mali_power_dir != NULL)
 			{
-				debugfs_create_file("always_on", 0400, mali_power_dir, NULL, &power_always_on_fops);
-				debugfs_create_file("power_events", 0400, mali_power_dir, NULL, &power_power_events_fops);
+				debugfs_create_file("always_on", 0600, mali_power_dir, NULL, &power_always_on_fops);
+				debugfs_create_file("power_events", 0200, mali_power_dir, NULL, &power_power_events_fops);
 			}
 
 			mali_gp_dir = debugfs_create_dir("gp", mali_debugfs_dir);
@@ -1282,8 +1535,8 @@ int mali_sysfs_register(const char *mali_dev_name)
 				mali_gp_all_dir = debugfs_create_dir("all", mali_gp_dir);
 				if (mali_gp_all_dir != NULL)
 				{
-					debugfs_create_file("counter_src0", 0400, mali_gp_all_dir, NULL, &gp_all_counter_src0_fops);
-					debugfs_create_file("counter_src1", 0400, mali_gp_all_dir, NULL, &gp_all_counter_src1_fops);
+					debugfs_create_file("counter_src0", 0200, mali_gp_all_dir, NULL, &gp_all_counter_src0_fops);
+					debugfs_create_file("counter_src1", 0200, mali_gp_all_dir, NULL, &gp_all_counter_src1_fops);
 				}
 
 				num_groups = mali_group_get_glob_num_groups();
@@ -1300,6 +1553,8 @@ int mali_sysfs_register(const char *mali_dev_name)
 						{
 							debugfs_create_file("counter_src0", 0600, mali_gp_gpx_dir, gp_core, &gp_gpx_counter_src0_fops);
 							debugfs_create_file("counter_src1", 0600, mali_gp_gpx_dir, gp_core, &gp_gpx_counter_src1_fops);
+							debugfs_create_file("base_addr", 0400, mali_gp_gpx_dir, &gp_core->hw_core, &hw_core_base_addr_fops);
+							debugfs_create_file("enabled", 0600, mali_gp_gpx_dir, group, &group_enabled_fops);
 						}
 						break; /* no need to look for any other GP cores */
 					}
@@ -1314,11 +1569,14 @@ int mali_sysfs_register(const char *mali_dev_name)
 				u32 num_groups;
 				int i;
 
+				debugfs_create_file("num_cores_total", 0400, mali_pp_dir, NULL, &pp_num_cores_total_fops);
+				debugfs_create_file("num_cores_enabled", 0600, mali_pp_dir, NULL, &pp_num_cores_enabled_fops);
+
 				mali_pp_all_dir = debugfs_create_dir("all", mali_pp_dir);
 				if (mali_pp_all_dir != NULL)
 				{
-					debugfs_create_file("counter_src0", 0400, mali_pp_all_dir, NULL, &pp_all_counter_src0_fops);
-					debugfs_create_file("counter_src1", 0400, mali_pp_all_dir, NULL, &pp_all_counter_src1_fops);
+					debugfs_create_file("counter_src0", 0200, mali_pp_all_dir, NULL, &pp_all_counter_src0_fops);
+					debugfs_create_file("counter_src1", 0200, mali_pp_all_dir, NULL, &pp_all_counter_src1_fops);
 				}
 
 				num_groups = mali_group_get_glob_num_groups();
@@ -1337,6 +1595,11 @@ int mali_sysfs_register(const char *mali_dev_name)
 						{
 							debugfs_create_file("counter_src0", 0600, mali_pp_ppx_dir, pp_core, &pp_ppx_counter_src0_fops);
 							debugfs_create_file("counter_src1", 0600, mali_pp_ppx_dir, pp_core, &pp_ppx_counter_src1_fops);
+							debugfs_create_file("base_addr", 0400, mali_pp_ppx_dir, &pp_core->hw_core, &hw_core_base_addr_fops);
+							if (!mali_group_is_virtual(group))
+							{
+								debugfs_create_file("enabled", 0600, mali_pp_ppx_dir, group, &group_enabled_fops);
+							}
 						}
 					}
 				}
@@ -1352,8 +1615,8 @@ int mali_sysfs_register(const char *mali_dev_name)
 				mali_l2_all_dir = debugfs_create_dir("all", mali_l2_dir);
 				if (mali_l2_all_dir != NULL)
 				{
-					debugfs_create_file("counter_src0", 0400, mali_l2_all_dir, NULL, &l2_all_counter_src0_fops);
-					debugfs_create_file("counter_src1", 0400, mali_l2_all_dir, NULL, &l2_all_counter_src1_fops);
+					debugfs_create_file("counter_src0", 0200, mali_l2_all_dir, NULL, &l2_all_counter_src0_fops);
+					debugfs_create_file("counter_src1", 0200, mali_l2_all_dir, NULL, &l2_all_counter_src1_fops);
 				}
 
 				l2_id = 0;
@@ -1368,6 +1631,7 @@ int mali_sysfs_register(const char *mali_dev_name)
 					{
 						debugfs_create_file("counter_src0", 0600, mali_l2_l2x_dir, l2_cache, &l2_l2x_counter_src0_fops);
 						debugfs_create_file("counter_src1", 0600, mali_l2_l2x_dir, l2_cache, &l2_l2x_counter_src1_fops);
+						debugfs_create_file("base_addr", 0400, mali_l2_l2x_dir, &l2_cache->hw_core, &hw_core_base_addr_fops);
 					}
 					
 					/* try next L2 */
@@ -1426,7 +1690,7 @@ int mali_sysfs_unregister(void)
 	return 0;
 }
 
-#else
+#else /* MALI_LICENSE_IS_GPL */
 
 /* Dummy implementations for non-GPL */
 
@@ -1440,5 +1704,4 @@ int mali_sysfs_unregister(void)
 	return 0;
 }
 
-
-#endif
+#endif /* MALI_LICENSE_IS_GPL */

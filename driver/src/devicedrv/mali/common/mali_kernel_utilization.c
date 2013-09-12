@@ -16,19 +16,26 @@
 /* Define how often to calculate and report GPU utilization, in milliseconds */
 static _mali_osk_lock_t *time_data_lock;
 
-static _mali_osk_atomic_t num_running_cores;
+static u32 num_running_gp_cores;
+static u32 num_running_pp_cores;
+
+static u64 work_start_time_gpu = 0;
+static u64 work_start_time_gp = 0;
+static u64 work_start_time_pp = 0;
+static u64 accumulated_work_time_gpu = 0;
+static u64 accumulated_work_time_gp = 0;
+static u64 accumulated_work_time_pp = 0;
 
 static u64 period_start_time = 0;
-static u64 work_start_time = 0;
-static u64 accumulated_work_time = 0;
-
 static _mali_osk_timer_t *utilization_timer = NULL;
 static mali_bool timer_running = MALI_FALSE;
 
-static u32 last_utilization = 0 ;
+static u32 last_utilization_gpu = 0 ;
+static u32 last_utilization_gp = 0 ;
+static u32 last_utilization_pp = 0 ;
 
 static u32 mali_utilization_timeout = 1000;
-void (*mali_utilization_callback)(unsigned int) = NULL;
+void (*mali_utilization_callback)(struct mali_gpu_utilization_data *data) = NULL;
 
 static void calculate_gpu_utilization(void* arg)
 {
@@ -36,36 +43,63 @@ static void calculate_gpu_utilization(void* arg)
 	u64 time_period;
 	u32 leading_zeroes;
 	u32 shift_val;
-	u32 work_normalized;
+	u32 work_normalized_gpu;
+	u32 work_normalized_gp;
+	u32 work_normalized_pp;
 	u32 period_normalized;
-	u32 utilization;
+	u32 utilization_gpu;
+	u32 utilization_gp;
+	u32 utilization_pp;
 
 	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 
-	if (accumulated_work_time == 0 && work_start_time == 0)
+	if (accumulated_work_time_gpu == 0 && work_start_time_gpu == 0)
 	{
-		/* Don't reschedule timer, this will be started if new work arrives */
+		/*
+		 * No work done for this period
+		 * - No need to reschedule timer
+		 * - Report zero usage
+		 */
 		timer_running = MALI_FALSE;
+
+		last_utilization_gpu = 0;
+		last_utilization_gp = 0;
+		last_utilization_pp = 0;
 
 		_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 
-		/* No work done for this period, report zero usage */
 		if (NULL != mali_utilization_callback)
 		{
-			mali_utilization_callback(0);
+			struct mali_gpu_utilization_data data = { 0, };
+			mali_utilization_callback(&data);
 		}
 
 		return;
 	}
 
 	time_now = _mali_osk_time_get_ns();
+
 	time_period = time_now - period_start_time;
 
 	/* If we are currently busy, update working period up to now */
-	if (work_start_time != 0)
+	if (work_start_time_gpu != 0)
 	{
-		accumulated_work_time += (time_now - work_start_time);
-		work_start_time = time_now;
+		accumulated_work_time_gpu += (time_now - work_start_time_gpu);
+		work_start_time_gpu = time_now;
+
+		/* GP and/or PP will also be busy if the GPU is busy at this point */
+
+		if (work_start_time_gp != 0)
+		{
+			accumulated_work_time_gp += (time_now - work_start_time_gp);
+			work_start_time_gp = time_now;
+		}
+
+		if (work_start_time_pp != 0)
+		{
+			accumulated_work_time_pp += (time_now - work_start_time_pp);
+			work_start_time_pp = time_now;
+		}
 	}
 
 	/*
@@ -78,7 +112,9 @@ static void calculate_gpu_utilization(void* arg)
 	/* Shift the 64-bit values down so they fit inside a 32-bit integer */
 	leading_zeroes = _mali_osk_clz((u32)(time_period >> 32));
 	shift_val = 32 - leading_zeroes;
-	work_normalized = (u32)(accumulated_work_time >> shift_val);
+	work_normalized_gpu = (u32)(accumulated_work_time_gpu >> shift_val);
+	work_normalized_gp = (u32)(accumulated_work_time_gp >> shift_val);
+	work_normalized_pp = (u32)(accumulated_work_time_pp >> shift_val);
 	period_normalized = (u32)(time_period >> shift_val);
 
 	/*
@@ -98,15 +134,24 @@ static void calculate_gpu_utilization(void* arg)
 		 * The divisor is so small that we can shift up the dividend, without loosing any data.
 		 * (dividend is always smaller than the divisor)
 		 */
-		work_normalized <<= 8;
+		work_normalized_gpu <<= 8;
+		work_normalized_gp <<= 8;
+		work_normalized_pp <<= 8;
 	}
 
-	utilization = work_normalized / period_normalized;
+	utilization_gpu = work_normalized_gpu / period_normalized;
+	utilization_gp = work_normalized_gp / period_normalized;
+	utilization_pp = work_normalized_pp / period_normalized;
 
-	last_utilization = utilization;
+	last_utilization_gpu = utilization_gpu;
+	last_utilization_gp = utilization_gp;
+	last_utilization_pp = utilization_pp;
 
-	accumulated_work_time = 0;
-	period_start_time = time_now; /* starting a new period */
+	/* starting a new period */
+	accumulated_work_time_gpu = 0;
+	accumulated_work_time_gp = 0;
+	accumulated_work_time_pp = 0;
+	period_start_time = time_now;
 
 	_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 
@@ -114,7 +159,8 @@ static void calculate_gpu_utilization(void* arg)
 
 	if (NULL != mali_utilization_callback)
 	{
-		mali_utilization_callback(utilization);
+		struct mali_gpu_utilization_data data = { utilization_gpu, utilization_gp, utilization_pp };
+		mali_utilization_callback(&data);
 	}
 }
 
@@ -129,9 +175,9 @@ _mali_osk_errcode_t mali_utilization_init(void)
 		{
 			mali_utilization_timeout = data.utilization_interval;
 		}
-		if (NULL != data.utilization_handler)
+		if (NULL != data.utilization_callback)
 		{
-			mali_utilization_callback = data.utilization_handler;
+			mali_utilization_callback = data.utilization_callback;
 		}
 	}
 #endif
@@ -153,7 +199,8 @@ _mali_osk_errcode_t mali_utilization_init(void)
 		return _MALI_OSK_ERR_FAULT;
 	}
 
-	_mali_osk_atomic_init(&num_running_cores, 0);
+	num_running_gp_cores = 0;
+	num_running_pp_cores = 0;
 
 	utilization_timer = _mali_osk_timer_init();
 	if (NULL == utilization_timer)
@@ -168,11 +215,17 @@ _mali_osk_errcode_t mali_utilization_init(void)
 
 void mali_utilization_suspend(void)
 {
-	if (NULL != utilization_timer)
+	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+	if (timer_running == MALI_TRUE)
 	{
-		_mali_osk_timer_del(utilization_timer);
 		timer_running = MALI_FALSE;
+		_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+		_mali_osk_timer_del(utilization_timer);
+		return;
 	}
+
+	_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 }
 
 void mali_utilization_term(void)
@@ -185,36 +238,35 @@ void mali_utilization_term(void)
 		utilization_timer = NULL;
 	}
 
-	_mali_osk_atomic_term(&num_running_cores);
-
 	_mali_osk_lock_term(time_data_lock);
 }
 
-void mali_utilization_core_start(u64 time_now)
+void mali_utilization_gp_start(void)
 {
-	if (_mali_osk_atomic_inc_return(&num_running_cores) == 1)
+	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+	++num_running_gp_cores;
+	if (1 == num_running_gp_cores)
 	{
-		/*
-		 * We went from zero cores working, to one core working,
-		 * we now consider the entire GPU for being busy
-		 */
+		u64 time_now = _mali_osk_time_get_ns();
 
-		_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+		/* First GP core started, consider GP busy from now and onwards */
+		work_start_time_gp = time_now;
 
-		if (time_now < period_start_time)
+		if (0 == num_running_pp_cores)
 		{
 			/*
-			 * This might happen if the calculate_gpu_utilization() was able
-			 * to run between the sampling of time_now and us grabbing the lock above
+			 * There are no PP cores running, so this is also the point
+			 * at which we consider the GPU to be busy as well.
 			 */
-			time_now = period_start_time;
+			work_start_time_gpu = time_now;
 		}
 
-		work_start_time = time_now;
+		/* Start a new period (and timer) if needed */
 		if (timer_running != MALI_TRUE)
 		{
 			timer_running = MALI_TRUE;
-			period_start_time = work_start_time; /* starting a new period */
+			period_start_time = time_now;
 
 			_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 
@@ -225,44 +277,121 @@ void mali_utilization_core_start(u64 time_now)
 			_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 		}
 	}
-}
-
-void mali_utilization_core_end(u64 time_now)
-{
-	if (_mali_osk_atomic_dec_return(&num_running_cores) == 0)
+	else
 	{
-		/*
-		 * No more cores are working, so accumulate the time we was busy.
-		 */
-		_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
-
-		if (time_now < work_start_time)
-		{
-			/*
-			 * This might happen if the calculate_gpu_utilization() was able
-			 * to run between the sampling of time_now and us grabbing the lock above
-			 */
-			time_now = work_start_time;
-		}
-
-		accumulated_work_time += (time_now - work_start_time);
-		work_start_time = 0;
-
+		/* Nothing to do */
 		_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
 	}
 }
 
+void mali_utilization_pp_start(void)
+{
+	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+	++num_running_pp_cores;
+	if (1 == num_running_pp_cores)
+	{
+		u64 time_now = _mali_osk_time_get_ns();
+
+		/* First PP core started, consider PP busy from now and onwards */
+		work_start_time_pp = time_now;
+
+		if (0 == num_running_gp_cores)
+		{
+			/*
+			 * There are no GP cores running, so this is also the point
+			 * at which we consider the GPU to be busy as well.
+			 */
+			work_start_time_gpu = time_now;
+		}
+
+		/* Start a new period (and timer) if needed */
+		if (timer_running != MALI_TRUE)
+		{
+			timer_running = MALI_TRUE;
+			period_start_time = time_now;
+
+			_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+			_mali_osk_timer_add(utilization_timer, _mali_osk_time_mstoticks(mali_utilization_timeout));
+		}
+		else
+		{
+			_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+		}
+	}
+	else
+	{
+		/* Nothing to do */
+		_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+	}
+}
+
+void mali_utilization_gp_end(void)
+{
+	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+	--num_running_gp_cores;
+	if (0 == num_running_gp_cores)
+	{
+		u64 time_now = _mali_osk_time_get_ns();
+
+		/* Last GP core ended, consider GP idle from now and onwards */
+		accumulated_work_time_gp += (time_now - work_start_time_gp);
+		work_start_time_gp = 0;
+
+		if (0 == num_running_pp_cores)
+		{
+			/*
+			 * There are no PP cores running, so this is also the point
+			 * at which we consider the GPU to be idle as well.
+			 */
+			accumulated_work_time_gpu += (time_now - work_start_time_gpu);
+			work_start_time_gpu = 0;
+		}
+	}
+
+	_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+}
+
+void mali_utilization_pp_end(void)
+{
+	_mali_osk_lock_wait(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+
+	--num_running_pp_cores;
+	if (0 == num_running_pp_cores)
+	{
+		u64 time_now = _mali_osk_time_get_ns();
+
+		/* Last PP core ended, consider PP idle from now and onwards */
+		accumulated_work_time_pp += (time_now - work_start_time_pp);
+		work_start_time_pp = 0;
+
+		if (0 == num_running_gp_cores)
+		{
+			/*
+			 * There are no GP cores running, so this is also the point
+			 * at which we consider the GPU to be idle as well.
+			 */
+			accumulated_work_time_gpu += (time_now - work_start_time_gpu);
+			work_start_time_gpu = 0;
+		}
+	}
+
+	_mali_osk_lock_signal(time_data_lock, _MALI_OSK_LOCKMODE_RW);
+}
+
 u32 _mali_ukk_utilization_gp_pp(void)
 {
-	return last_utilization;
+	return last_utilization_gpu;
 }
 
 u32 _mali_ukk_utilization_gp(void)
 {
-	return last_utilization;
+	return last_utilization_gp;
 }
 
 u32 _mali_ukk_utilization_pp(void)
 {
-	return last_utilization;
+	return last_utilization_pp;
 }

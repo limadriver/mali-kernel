@@ -24,7 +24,7 @@
 /* Number of frame registers on Mali-300 and later */
 #define MALI_PP_MALI400_NUM_FRAME_REGISTERS ((0x058/4)+1)
 
-static struct mali_pp_core* mali_global_pp_cores[MALI_MAX_NUMBER_OF_PP_CORES];
+static struct mali_pp_core* mali_global_pp_cores[MALI_MAX_NUMBER_OF_PP_CORES] = { NULL };
 static u32 mali_global_num_pp_cores = 0;
 
 /* Interrupt handlers */
@@ -121,12 +121,21 @@ void mali_pp_delete(struct mali_pp_core *core)
 	mali_hw_core_delete(&core->hw_core);
 
 	/* Remove core from global list */
-	for (i = 0; i < MALI_MAX_NUMBER_OF_PP_CORES; i++)
+	for (i = 0; i < mali_global_num_pp_cores; i++)
 	{
 		if (mali_global_pp_cores[i] == core)
 		{
 			mali_global_pp_cores[i] = NULL;
 			mali_global_num_pp_cores--;
+
+			if (i != mali_global_num_pp_cores)
+			{
+				/* We removed a PP core from the middle of the array -- move the last
+				 * PP core to the current position to close the gap */
+				mali_global_pp_cores[i] = mali_global_pp_cores[mali_global_num_pp_cores];
+				mali_global_pp_cores[mali_global_num_pp_cores] = NULL;
+			}
+
 			break;
 		}
 	}
@@ -304,7 +313,6 @@ _mali_osk_errcode_t mali_pp_reset(struct mali_pp_core *core)
 
 void mali_pp_job_start(struct mali_pp_core *core, struct mali_pp_job *job, u32 sub_job, mali_bool restart_virtual)
 {
-	u32 num_frame_registers;
 	u32 relative_address;
 	u32 start_index;
 	u32 nr_of_regs;
@@ -318,7 +326,6 @@ void mali_pp_job_start(struct mali_pp_core *core, struct mali_pp_job *job, u32 s
 	MALI_DEBUG_ASSERT_POINTER(core);
 
 	/* Write frame registers */
-	num_frame_registers = (_MALI_PRODUCT_ID_MALI200 == mali_kernel_core_get_product_id()) ? MALI_PP_MALI200_NUM_FRAME_REGISTERS : MALI_PP_MALI400_NUM_FRAME_REGISTERS;
 
 	/*
 	 * There are two frame registers which are different for each sub job:
@@ -355,7 +362,7 @@ void mali_pp_job_start(struct mali_pp_core *core, struct mali_pp_job *job, u32 s
 	/* Write remaining registers */
 	relative_address = MALI200_REG_ADDR_ORIGIN_OFFSET_X;
 	start_index = MALI200_REG_ADDR_ORIGIN_OFFSET_X / sizeof(u32);
-	nr_of_regs = num_frame_registers - MALI200_REG_ADDR_ORIGIN_OFFSET_X / sizeof(u32);
+	nr_of_regs = MALI_PP_MALI400_NUM_FRAME_REGISTERS - MALI200_REG_ADDR_ORIGIN_OFFSET_X / sizeof(u32);
 
 	mali_hw_core_register_write_array_relaxed_conditional(&core->hw_core,
 	        relative_address, &frame_registers[start_index],
@@ -408,7 +415,7 @@ u32 mali_pp_core_get_version(struct mali_pp_core *core)
 
 struct mali_pp_core* mali_pp_get_global_pp_core(u32 index)
 {
-	if (MALI_MAX_NUMBER_OF_PP_CORES > index)
+	if (mali_global_num_pp_cores > index)
 	{
 		return mali_global_pp_cores[index];
 	}
@@ -478,7 +485,7 @@ void mali_pp_update_performance_counters(struct mali_pp_core *parent, struct mal
 	u32 val0 = 0;
 	u32 val1 = 0;
 #if defined(CONFIG_MALI400_PROFILING)
-	int counter_index = COUNTER_FP0_C0 + (2 * child->core_id);
+	int counter_index = COUNTER_FP_0_C0 + (2 * child->core_id);
 #endif
 
 	if (MALI_HW_CORE_NO_COUNTER != parent->counter_src0_used)
