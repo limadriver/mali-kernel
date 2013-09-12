@@ -46,3 +46,12 @@ config MALI_DMA_BUF_MAP_ON_ATTACH
 	  every time the GPU need to access the buffer.
 
 	  Mapping for each access can cause lower performance.
+
+config MALI_SHARED_INTERRUPTS
+	bool "Support for shared interrupts"
+	depends on MALI400
+	default n
+	---help---
+	  Adds functionality required to properly support shared interrupts.  Without this support,
+	  the device driver will fail during insmod if it detects shared interrupts.  Works even if
+	  the GPU is not using shared interrupts, but can cause lower performance.

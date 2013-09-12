@@ -29,6 +29,7 @@ int get_api_version_wrapper(struct mali_session_data *session_data, _mali_uk_get
 int get_user_settings_wrapper(struct mali_session_data *session_data, _mali_uk_get_user_settings_s __user *uargs);
 #if defined(CONFIG_SYNC)
 int stream_create_wrapper(struct mali_session_data *session_data, _mali_uk_stream_create_s __user *uargs);
+int sync_fence_create_empty_wrapper(struct mali_session_data *session_data, _mali_uk_fence_create_empty_s __user *uargs);
 int sync_fence_validate_wrapper(struct mali_session_data *session, _mali_uk_fence_validate_s __user *uargs);
 #endif
 int post_notification_wrapper(struct mali_session_data *session_data, _mali_uk_post_notification_s __user *uargs);

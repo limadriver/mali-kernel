@@ -27,10 +27,12 @@ int pp_start_job_wrapper(struct mali_session_data *session_data, _mali_uk_pp_sta
 	err = _mali_ukk_pp_start_job(session_data, uargs, &fence);
 	if (_MALI_OSK_ERR_OK != err) return map_errcode(err);
 
-	if (-1 != fence)
+#if defined(CONFIG_SYNC)
+	if (0 != put_user(fence, &uargs->fence))
 	{
-		if (0 != put_user(fence, &uargs->fence)) return -EFAULT;
+		/* Since the job has started we can't return an error. */
 	}
+#endif /* CONFIG_SYNC */
 
 	return 0;
 }

@@ -69,6 +69,7 @@ typedef enum
 	_MALI_UK_GET_USER_SETTING,       /**< _mali_ukk_get_user_setting() *//**< [out] */
 	_MALI_UK_GET_USER_SETTINGS,       /**< _mali_ukk_get_user_settings() *//**< [out] */
 	_MALI_UK_STREAM_CREATE,           /**< _mali_ukk_stream_create() */
+	_MALI_UK_FENCE_CREATE_EMPTY,           /**< _mali_ukk_fence_create_empty() */
 	_MALI_UK_FENCE_VALIDATE,          /**< _mali_ukk_fence_validate() */
 
 	/** Memory functions */
@@ -426,6 +427,7 @@ typedef struct
 #define _MALI_PP_JOB_FLAG_NO_NOTIFICATION (1<<0)
 #define _MALI_PP_JOB_FLAG_BARRIER         (1<<1)
 #define _MALI_PP_JOB_FLAG_FENCE           (1<<2)
+#define _MALI_PP_JOB_FLAG_EMPTY_FENCE     (1<<3)
 
 /** @defgroup _mali_uk_ppstartjob_s Fragment Processor Start Job
  * @{ */
@@ -491,7 +493,7 @@ typedef struct
 	u32 flush_id;                       /**< [in] flush id within the originating frame builder */
 	u32 flags;                          /**< [in] See _MALI_PP_JOB_FLAG_* for a list of avaiable flags */
 	s32 fence;                          /**< [in,out] Fence to wait on / fence that will be signalled on job completion, if _MALI_PP_JOB_FLAG_FENCE is set */
-	s32 stream;                         /**< [in] Steam identifier */
+	s32 stream;                         /**< [in] Steam identifier if _MALI_PP_JOB_FLAG_FENCE, an empty fence to use for this job if _MALI_PP_JOB_FLAG_EMPTY_FENCE is set */
 	u32 num_memory_cookies;             /**< [in] number of memory cookies attached to job */
 	u32 *memory_cookies;                /**< [in] memory cookies attached to job  */
 } _mali_uk_pp_start_job_s;
@@ -1123,6 +1125,15 @@ typedef struct
 	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
 	int fd;                         /**< [in] file descriptor describing stream */
 } _mali_uk_stream_destroy_s;
+
+/** @brief Create empty fence
+ */
+typedef struct
+{
+	void *ctx;                      /**< [in,out] user-kernel context (trashed on output) */
+	s32 stream;                     /**< [in] stream to create fence on */
+	s32 fence;                      /**< [out] file descriptor describing fence */
+} _mali_uk_fence_create_empty_s;
 
 /** @brief Check fence validity
  */

@@ -118,6 +118,8 @@ fail:
 void mali_pp_job_delete(struct mali_pp_job *job)
 {
 #ifdef CONFIG_SYNC
+	/* It is safe to delete the work without flushing. */
+	if (NULL != job->sync_work) _mali_osk_wq_delete_work_nonflush(job->sync_work);
 	if (NULL != job->pre_fence) sync_fence_put(job->pre_fence);
 	if (NULL != job->sync_point) sync_fence_put(job->sync_point->fence);
 #endif

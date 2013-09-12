@@ -615,6 +615,13 @@ _mali_osk_wq_work_t *_mali_osk_wq_create_work( _mali_osk_wq_work_handler_t handl
  */
 void _mali_osk_wq_delete_work( _mali_osk_wq_work_t *work );
 
+/** @brief Delete a work object
+ *
+ * This will NOT flush the work queue, so only call this if you are sure that the work handler will
+ * not be called after deletion.
+ */
+void _mali_osk_wq_delete_work_nonflush( _mali_osk_wq_work_t *work );
+
 /** @brief Cause a queued, deferred call of the work handler
  *
  * _mali_osk_wq_schedule_work provides a mechanism for enqueuing deferred calls

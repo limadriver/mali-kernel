@@ -191,13 +191,15 @@ void mali_pp_scheduler_terminate(void)
 {
 	struct mali_group *group, *temp;
 
+	MALI_DEBUG_ASSERT(_mali_osk_list_empty(&group_list_working));
+	MALI_DEBUG_ASSERT(!virtual_group_working);
+
 	/* Delete all groups owned by scheduler */
 	if (NULL != virtual_group)
 	{
 		mali_group_delete(virtual_group);
 	}
 
-	MALI_DEBUG_ASSERT(_mali_osk_list_empty(&group_list_working));
 	_MALI_OSK_LIST_FOREACHENTRY(group, temp, &group_list_idle, struct mali_group, pp_scheduler_list)
 	{
 		mali_group_delete(group);
@@ -710,6 +712,14 @@ void mali_pp_scheduler_job_done(struct mali_group *group, struct mali_pp_job *jo
 		 * num_slots == num_slots_idle, so unless we are done working, no
 		 * threads will actually be woken up.
 		 */
+		if (mali_group_is_virtual(group))
+		{
+			virtual_group_working = MALI_FALSE;
+		}
+		else
+		{
+			_mali_osk_list_move(&(group->pp_scheduler_list), &group_list_idle);
+		}
 		_mali_osk_wait_queue_wake_up(pp_scheduler_working_wait_queue);
 		mali_pp_scheduler_unlock();
 		return;
@@ -996,9 +1006,6 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx, _mali_uk_pp_start_job_s *u
 {
 	struct mali_session_data *session;
 	struct mali_pp_job *job;
-#if defined(CONFIG_SYNC)
-	int post_fence = -1;
-#endif
 
 	MALI_DEBUG_ASSERT_POINTER(uargs);
 	MALI_DEBUG_ASSERT_POINTER(ctx);
@@ -1029,6 +1036,8 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx, _mali_uk_pp_start_job_s *u
 #if defined(CONFIG_SYNC)
 	if (_MALI_PP_JOB_FLAG_FENCE & job->uargs.flags)
 	{
+		int post_fence = -1;
+
 		job->sync_point = mali_stream_create_point(job->uargs.stream);
 
 		if (unlikely(NULL == job->sync_point))
@@ -1059,6 +1068,53 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx, _mali_uk_pp_start_job_s *u
 		*fence = post_fence;
 
 		MALI_DEBUG_PRINT(3, ("Sync: Created fence %d for job %d\n", post_fence, mali_pp_job_get_id(job)));
+	}
+	else if (_MALI_PP_JOB_FLAG_EMPTY_FENCE & job->uargs.flags)
+	{
+		int empty_fence_fd = job->uargs.stream;
+		struct sync_fence *empty_fence;
+		struct sync_pt *pt;
+		int ret;
+
+		/* Grab and keep a reference to the fence. It must be around
+		 * when the job is completed, so the point can be signalled. */
+		empty_fence = sync_fence_fdget(empty_fence_fd);
+
+		if (unlikely(NULL == empty_fence))
+		{
+			MALI_DEBUG_PRINT_ERROR(("Failed to accept empty fence: %d\n", empty_fence_fd));
+			mali_pp_job_mark_sub_job_completed(job, MALI_FALSE); /* Flagging the job as failed. */
+			mali_pp_scheduler_return_job_to_user(job, MALI_FALSE); /* This will also delete the job object */
+			return _MALI_OSK_ERR_OK;
+		}
+
+		if (unlikely(list_empty(&empty_fence->pt_list_head)))
+		{
+			MALI_DEBUG_PRINT_ERROR(("Failed to accept empty fence: %d\n", empty_fence_fd));
+			sync_fence_put(empty_fence);
+			mali_pp_job_mark_sub_job_completed(job, MALI_FALSE); /* Flagging the job as failed. */
+			mali_pp_scheduler_return_job_to_user(job, MALI_FALSE); /* This will also delete the job object */
+			return _MALI_OSK_ERR_OK;
+		}
+
+		pt = list_first_entry(&empty_fence->pt_list_head, struct sync_pt, pt_list);
+
+		ret = mali_sync_timed_commit(pt);
+
+		if (unlikely(0 != ret))
+		{
+			MALI_DEBUG_PRINT_ERROR(("Empty fence not valid: %d\n", empty_fence_fd));
+			sync_fence_put(empty_fence);
+			mali_pp_job_mark_sub_job_completed(job, MALI_FALSE); /* Flagging the job as failed. */
+			mali_pp_scheduler_return_job_to_user(job, MALI_FALSE); /* This will also delete the job object */
+			return _MALI_OSK_ERR_OK;
+		}
+
+		job->sync_point = pt;
+
+		*fence = empty_fence_fd;
+
+		MALI_DEBUG_PRINT(3, ("Sync: Job %d now backs fence %d\n", mali_pp_job_get_id(job), empty_fence_fd));
 	}
 
 	if (0 < job->uargs.fence)
@@ -1107,7 +1163,10 @@ _mali_osk_errcode_t _mali_ukk_pp_start_job(void *ctx, _mali_uk_pp_start_job_s *u
 		{
 			/* Fence has already signalled */
 			mali_pp_scheduler_queue_job(job, session);
-			if (0 == _mali_osk_list_empty(&group_list_idle)) mali_pp_scheduler_schedule();
+			if (!_mali_osk_list_empty(&group_list_idle) || !virtual_group_working)
+			{
+				mali_pp_scheduler_schedule();
+			}
 			return _MALI_OSK_ERR_OK;
 		}
 		else if (0 > err)
@@ -1319,6 +1378,7 @@ void mali_pp_scheduler_reset_all_groups(void)
 	}
 
 	MALI_DEBUG_ASSERT(_mali_osk_list_empty(&group_list_working));
+	MALI_DEBUG_ASSERT(!virtual_group_working);
 
 	_MALI_OSK_LIST_FOREACHENTRY(group, temp, &group_list_idle, struct mali_group, pp_scheduler_list)
 	{

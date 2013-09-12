@@ -69,6 +69,12 @@ u32 _mali_osk_resource_base_address(void);
  */
 _mali_osk_errcode_t _mali_osk_device_data_get(struct _mali_osk_device_data *data);
 
+/** @brief Determines if Mali GPU has been configured with shared interrupts.
+ *
+ * @return MALI_TRUE if shared interrupts, MALI_FALSE if not.
+ */
+mali_bool _mali_osk_shared_interrupts(void);
+
 /** @} */ /* end group _mali_osk_miscellaneous */
 
 

@@ -658,6 +658,20 @@ static _mali_osk_errcode_t mali_parse_config_groups(void)
 	return _MALI_OSK_ERR_FAULT;
 }
 
+static _mali_osk_errcode_t mali_check_shared_interrupts(void)
+{
+#if !defined(CONFIG_MALI_SHARED_INTERRUPTS)
+	if (MALI_TRUE == _mali_osk_shared_interrupts())
+	{
+		MALI_PRINT_ERROR(("Shared interrupts detected, but driver support is not enabled\n"));
+		return _MALI_OSK_ERR_FAULT;
+	}
+#endif /* !defined(CONFIG_MALI_SHARED_INTERRUPTS) */
+
+	/* It is OK to compile support for shared interrupts even if Mali is not using it. */
+	return _MALI_OSK_ERR_OK;
+}
+
 static _mali_osk_errcode_t mali_parse_config_pmu(void)
 {
 	_mali_osk_resource_t resource_pmu;
@@ -800,6 +814,9 @@ _mali_osk_errcode_t mali_initialize_subsystems(void)
 	err = mali_set_global_gpu_base_address();
 	if (_MALI_OSK_ERR_OK != err) goto set_global_gpu_base_address_failed;
 
+	err = mali_check_shared_interrupts();
+	if (_MALI_OSK_ERR_OK != err) goto check_shared_interrupts_failed;
+
 	/* Initialize the MALI PMU */
 	err = mali_parse_config_pmu();
 	if (_MALI_OSK_ERR_OK != err) goto parse_pmu_config_failed;
@@ -882,6 +899,8 @@ pm_init_failed:
 	}
 parse_pmu_config_failed:
 	/* undoing mali_parse_config_pmu() is done by mali_memory_terminate() */
+check_shared_interrupts_failed:
+	global_gpu_base_address = 0;
 set_global_gpu_base_address_failed:
 	global_gpu_base_address = 0;
 parse_memory_config_failed:

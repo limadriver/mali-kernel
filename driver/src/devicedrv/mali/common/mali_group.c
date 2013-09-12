@@ -514,6 +514,16 @@ void mali_group_reset(struct mali_group *group)
 
 	group->session = NULL;
 
+	if (NULL != group->dlbu_core)
+	{
+		mali_dlbu_reset(group->dlbu_core);
+	}
+
+	if (NULL != group->bcast_core)
+	{
+		mali_bcast_reset(group->bcast_core);
+	}
+
 	if (NULL != group->mmu)
 	{
 		mali_mmu_reset(group->mmu);
